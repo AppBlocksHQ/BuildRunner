@@ -11,7 +11,7 @@ const rimraf = require('rimraf');
 let workerInterval;
 
 
-const APP_ROOT = path.join(__dirname, '..', '..');
+const APP_ROOT = path.join(__dirname, '..');
 
 const envFilePath = path.join(APP_ROOT, '.env');
 dotenv.config({ path: envFilePath });
@@ -33,6 +33,11 @@ cron.schedule('* * * * *', () => {
         }
     }
 });
+
+if (!process.env.API_URL) {
+    console.log('API_URL not set');
+    return;
+}
 
 const socketURL = `${process.env.API_URL}/workers`;
 const socket = io(socketURL, {
