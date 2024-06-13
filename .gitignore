@@ -25,3 +25,4 @@ logs/
 # Dependency lock files
 package-lock.json
 yarn.lock
+TIDEProjects
