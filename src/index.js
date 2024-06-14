@@ -34,90 +34,99 @@ cron.schedule('* * * * *', () => {
     }
 });
 
-if (!process.env.API_URL) {
-    console.log('API_URL not set');
-    return;
-}
-
-const socketURL = `${process.env.API_URL}/workers`;
-const socket = io(socketURL, {
-    path: '/workers',
-});
-
-socket.on('connect_error', (err) => {
-    console.log(`connect_error due to ${err.message}`);
-});
-
-socket.on('disconnect', (reason, details) => {
-    console.log(`disconnected due to ${reason}, ${JSON.stringify(details)}`);
-});
-
-socket.on('connect', () => {
-    console.log('Connected to Server');
-    const jobTypes = [];
-    if (process.env.PROJECTS_DIR || process.env.PATH_TMAKE) {
-        jobTypes.push('build:tios');
-    }
-    if (process.env.ZEPHYR_BASE) {
-        jobTypes.push('build:zephyr');
-    }
-    console.log(`Worker job types: ${jobTypes.join(', ')}`);
-    socket.emit('update', {
-        key: process.env.WORKER_KEY,
-        capabilities: jobTypes,
-    });
-    Object.keys(jobs).forEach((job) => {
-        socket.emit('job', job);
-        delete jobs[job.id];
-    });
-});
-
-socket.on('job', async (job) => {
-    // process the job
-    if (!job) {
-        return;
-    }
-    try {
-        let result;
-        jobs[job.id] = job;
-        const outputInterval = setInterval(() => {
-            if (socket.connected) {
-                if (job.result && job.result.output) {
-                    socket.emit('job', {
-                        ...job,
-                        result: {
-                            output: job.result.output,
-                        },
-                    });
+const servers = [];
+try {
+    const fileContents = fs.readFileSync(path.join(APP_ROOT, 'config.json'), 'utf-8');
+    const configs = JSON.parse(fileContents);
+    if (configs) {
+        servers = configs;
+        for (let i = 0; i < servers.length; i += 1) {
+            const server = servers[i];
+            const socketURL = `${server.url}/workers`;
+            const socket = io(socketURL, {
+                path: '/workers',
+            });
+            
+            socket.on('connect_error', (err) => {
+                console.log(`connect_error due to ${err.message}`);
+            });
+            
+            socket.on('disconnect', (reason, details) => {
+                console.log(`disconnected due to ${reason}, ${JSON.stringify(details)}`);
+            });
+            
+            socket.on('connect', () => {
+                console.log('Connected to Server');
+                const jobTypes = [];
+                if (process.env.PROJECTS_DIR || process.env.PATH_TMAKE) {
+                    jobTypes.push('build:tios');
                 }
-            }
-        }, 1000);
-        switch (job.type) {
-            case 'build:tios':
-                result = await buildTide(job);
-                break;
-            case 'build:zephyr':
-                result = await buildZephyr(job);
-                break;
-            default:
-
-                break;
+                if (process.env.ZEPHYR_BASE) {
+                    jobTypes.push('build:zephyr');
+                }
+                console.log(`Worker job types: ${jobTypes.join(', ')}`);
+                socket.emit('update', {
+                    key: server.key,
+                    capabilities: jobTypes,
+                });
+                Object.keys(jobs).forEach((job) => {
+                    socket.emit('job', job);
+                    delete jobs[job.id];
+                });
+            });
+            
+            socket.on('job', async (job) => {
+                // process the job
+                if (!job) {
+                    return;
+                }
+                try {
+                    let result;
+                    jobs[job.id] = job;
+                    const outputInterval = setInterval(() => {
+                        if (socket.connected) {
+                            if (job.result && job.result.output) {
+                                socket.emit('job', {
+                                    ...job,
+                                    result: {
+                                        output: job.result.output,
+                                    },
+                                });
+                            }
+                        }
+                    }, 1000);
+                    switch (job.type) {
+                        case 'build:tios':
+                            result = await buildTide(job);
+                            break;
+                        case 'build:zephyr':
+                            result = await buildZephyr(job);
+                            break;
+                        default:
+            
+                            break;
+                    }
+                    clearInterval(outputInterval);
+                    job.result = result;
+                    job.status = 'completed';
+                } catch (ex) {
+                    job.status = 'failed';
+                    job.result = {
+                        output: ex.message.toString(),
+                    };
+                } finally {
+                    if (socket.connected) {
+                        socket.emit('job', job);
+                        delete jobs[job.id];
+                    }
+                }
+            });
         }
-        clearInterval(outputInterval);
-        job.result = result;
-        job.status = 'completed';
-    } catch (ex) {
-        job.status = 'failed';
-        job.result = {
-            output: ex.message.toString(),
-        };
-    } finally {
-        if (socket.connected) {
-            socket.emit('job', job);
-            delete jobs[job.id];
-        }
+            
     }
-});
+} catch (ex) {
+    console.log('unable to read config.json');
+}
 
 async function buildTide(job) {
     let PATH_TMAKE = '/home/tibbo/.wine/drive_c/Program Files/Tibbo/TIDE/Bin/tmake.exe';

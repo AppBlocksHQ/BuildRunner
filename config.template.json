@@ -1,0 +1,10 @@
+[
+    {
+        "url": "https://server1.com",
+        "key": "key"
+    },
+    {
+        "url": "https://server2.com",
+        "key": "key"
+    }
+]

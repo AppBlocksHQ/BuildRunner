@@ -26,3 +26,4 @@ logs/
 package-lock.json
 yarn.lock
 TIDEProjects
+config.json
