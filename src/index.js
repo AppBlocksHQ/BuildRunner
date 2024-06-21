@@ -215,6 +215,8 @@ async function buildTide(job) {
                 }
                 if (file === projectPlatform) {
                     fs.copySync(path.join(platformsRoot, file), path.join(projectPath, 'Platforms', file));
+                } else if (file === 'lib') {
+                    fs.copySync(path.join(platformsRoot, file), path.join(projectPath, 'Platforms', file));
                 } else if (file === 'src') {
                     fs.copySync(path.join(platformsRoot, 'src', '0_00'),
                         path.join(projectPath, 'Platforms/src/0_00'));
