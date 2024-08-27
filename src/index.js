@@ -49,15 +49,15 @@ try {
             const socket = io(socketURL, {
                 path: '/workers',
             });
-            
+
             socket.on('connect_error', (err) => {
                 console.log(`connect_error due to ${err.message}`);
             });
-            
+
             socket.on('disconnect', (reason, details) => {
                 console.log(`disconnected due to ${reason}, ${JSON.stringify(details)}`);
             });
-            
+
             socket.on('connect', () => {
                 console.log('Connected to Server');
                 const jobTypes = [];
@@ -77,7 +77,7 @@ try {
                     delete jobs[job.id];
                 });
             });
-            
+
             socket.on('job', async (job) => {
                 // process the job
                 if (!job) {
@@ -88,12 +88,13 @@ try {
                     jobs[job.id] = job;
                     const outputInterval = setInterval(() => {
                         if (socket.connected) {
-                            if (job.result && job.result.output) {
+                            if (job.result && (job.result.output || job.progress)) {
                                 socket.emit('job', {
                                     ...job,
                                     result: {
                                         output: job.result.output,
                                     },
+                                    progress: job.progress,
                                 });
                             }
                         }
@@ -106,7 +107,7 @@ try {
                             result = await buildZephyr(job);
                             break;
                         default:
-            
+
                             break;
                     }
                     clearInterval(outputInterval);
@@ -125,7 +126,6 @@ try {
                 }
             });
         }
-            
     }
 } catch (ex) {
     console.log('unable to read config.json');
@@ -304,10 +304,11 @@ async function buildTide(job) {
                 if (!fs.existsSync(tpcPath)) {
                     return reject();
                 }
+                job.result.output = compileOutput;
                 resolve({
                     files: {
-                        tpc: fs.readFileSync(tpcPath),
-                        pdb: fs.readFileSync(path.join(projectPath, 'tmp', 'database.pdb')),
+                        binary: fs.readFileSync(tpcPath),
+                        symbols: fs.readFileSync(path.join(projectPath, 'tmp', 'database.pdb')),
                     },
                     output: compileOutput,
                 });
@@ -372,7 +373,6 @@ async function buildZephyr(job) {
     shortPath = puuid;
     let zephyrProjectPath = process.env.ZEPHYR_BASE;
     if (project.zephyrToolchain === 'nrf') {
-        tpcPath = path.join(projectPath, 'build', 'zephyr', 'zephyr.hex');
         if (process.env.ZEPHYR_BASE_NRF) {
             zephyrProjectPath = process.env.ZEPHYR_BASE_NRF;
         }
@@ -383,6 +383,7 @@ async function buildZephyr(job) {
     }
     await fs.outputFile(path.join(projectPath, 'files.json'), JSON.stringify(files));
     ccmd = `docker run --rm -v ${zephyrProjectPath}:/workdir -v ${projectPath}:/workdir/${shortPath} ghcr.io/zephyrproject-rtos/ci:latest /bin/bash -c "cd /workdir && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build"`;
+    console.log(ccmd);
 
     if (fs.existsSync(tpcPath)) {
         fs.unlinkSync(tpcPath);
@@ -398,8 +399,24 @@ async function buildZephyr(job) {
         write: (chunk, encoding, next) => {
             const output = Buffer.concat([chunk]).toString('utf8');
             compileOutput = ''.concat(compileOutput, output);
-            job.result.output = compileOutput;
-            // console.log(output);
+            compileOutput = ''.concat(compileOutput, output);
+            const lines = compileOutput.split('\n');
+            const regexp = /\[(\d+)\/(\d+)\].*/g;
+            let match;
+            for (let i = lines.length - 1; i >= 0; i -= 1) {
+                match = regexp.exec(lines[i]);
+                if (match) {
+                    break;
+                }
+            }
+            if (match) {
+                const current = parseInt(match[1], 10);
+                const total = parseInt(match[2], 10);
+                job.progress = (current / total);
+                // if (current === total) {
+                //     job.result.output = compileOutput;
+                // }
+            }
             next();
         },
     });
@@ -416,14 +433,20 @@ async function buildZephyr(job) {
         const result = await new Promise((resolve, reject) => {
             exec.on('exit', () => {
                 // const compileData = globalThis.compileData.get(pid);
+                job.result.output = compileOutput;
                 const exitCode = exec.exitCode;
                 if (exitCode !== 0 && !fs.existsSync(tpcPath)) {
                     return reject();
                 }
+                let hex;
+                if (fs.existsSync(path.join(projectPath, 'build', 'zephyr', 'zephyr.hex'))) {
+                    hex = fs.readFileSync(path.join(projectPath, 'build', 'zephyr', 'zephyr.hex'));
+                }
                 resolve({
                     files: {
-                        tpc: fs.readFileSync(tpcPath),
-                        pdb: fs.readFileSync(pdbPath),
+                        binary: fs.readFileSync(tpcPath),
+                        symbols: fs.readFileSync(pdbPath),
+                        hex,
                     },
                     output: compileOutput,
                 });
