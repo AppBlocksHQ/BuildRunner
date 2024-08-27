@@ -377,6 +377,10 @@ async function buildZephyr(job) {
             zephyrProjectPath = process.env.ZEPHYR_BASE_NRF;
         }
     }
+    const dirItems = fs.readdirSync(zephyrProjectPath);
+    if (!dirItems.includes('zephyr')) {
+        zephyrProjectPath = path.join(zephyrProjectPath, '..');
+    }
     await fs.outputFile(path.join(projectPath, 'files.json'), JSON.stringify(files));
     ccmd = `docker run --rm -v ${zephyrProjectPath}:/workdir -v ${projectPath}:/workdir/${shortPath} ghcr.io/zephyrproject-rtos/ci:latest /bin/bash -c "cd /workdir && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build"`;
 
