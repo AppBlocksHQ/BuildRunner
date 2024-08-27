@@ -11,7 +11,10 @@ const rimraf = require('rimraf');
 let workerInterval;
 
 
-const APP_ROOT = path.join(__dirname, '..');
+let APP_ROOT = path.join(__dirname, '..');
+if (__dirname === 'src') {
+    APP_ROOT = path.join(__dirname, '..', '..');
+}
 
 const envFilePath = path.join(APP_ROOT, '.env');
 dotenv.config({ path: envFilePath });
@@ -264,7 +267,7 @@ async function buildTide(job) {
         // const windowsPath = winParts.join('\\');
         const options = '';
         // sed -e 's/\\x1b\\[[0-9;]*m//g'
-        ccmd = `wine "${PATH_TMAKE}" "${winProjectPath}" -p "${platformsPath}" ${options} | sed -e 's/\\x1b\\[[0-9;]*m//g'; chmod 777 -R "/TIDEProjects/temp/${puuid}"`;
+        ccmd = `wine "${PATH_TMAKE}" "${winProjectPath}" -p "${platformsPath}" ${options} | sed -e 's/\\x1b\\[[0-9;]*m//g'; chmod 777 -R "${process.env.PROJECTS_DIR || '/TIDEProjects'}/temp/${puuid}"`;
     }
 
     if (fs.existsSync(tpcPath)) {
@@ -367,13 +370,15 @@ async function buildZephyr(job) {
     tpcPath = path.join(projectPath, 'build', 'zephyr', 'zephyr.bin');
     pdbPath = path.join(projectPath, 'build', 'zephyr', 'zephyr.elf');
     shortPath = puuid;
-    let zephyrProjectPath = '~/projects/zephyrcontainer';
-    if (project.device.indexOf('nrf') === 0) {
+    let zephyrProjectPath = process.env.ZEPHYR_BASE;
+    if (project.zephyrToolchain === 'nrf') {
         tpcPath = path.join(projectPath, 'build', 'zephyr', 'zephyr.hex');
-        zephyrProjectPath = '~/projects/nrfworkspace';
+        if (process.env.ZEPHYR_BASE_NRF) {
+            zephyrProjectPath = process.env.ZEPHYR_BASE_NRF;
+        }
     }
     await fs.outputFile(path.join(projectPath, 'files.json'), JSON.stringify(files));
-    ccmd = `docker run --rm -v ${zephyrProjectPath}:/workdir -v ${projectPath}:/workdir/${shortPath} ghcr.io/zephyrproject-rtos/ci:latest /bin/bash -c "cd /workdir && west build -b ${project.device} ./${shortPath} --build-dir ./${shortPath}/build"`;
+    ccmd = `docker run --rm -v ${zephyrProjectPath}:/workdir -v ${projectPath}:/workdir/${shortPath} ghcr.io/zephyrproject-rtos/ci:latest /bin/bash -c "cd /workdir && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build"`;
 
     if (fs.existsSync(tpcPath)) {
         fs.unlinkSync(tpcPath);
