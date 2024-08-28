@@ -12,9 +12,16 @@ let workerInterval;
 
 
 let APP_ROOT = path.join(__dirname, '..');
-if (__dirname === 'src') {
-    APP_ROOT = path.join(__dirname, '..', '..');
+// detect if running in appblocks
+if (fs.existsSync(path.join(__dirname, '..', '..', '..', 'package.json'))) {
+    const packageJson = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'package.json'));
+    const packageData = JSON.parse(packageJson);
+    if (packageData.name === '@appblocks/root') {
+        APP_ROOT = path.join(__dirname, '..', '..', '..');
+    }
 }
+
+console.log(APP_ROOT);
 
 const envFilePath = path.join(APP_ROOT, '.env');
 dotenv.config({ path: envFilePath });
