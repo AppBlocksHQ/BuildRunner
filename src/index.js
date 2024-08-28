@@ -46,7 +46,7 @@ cron.schedule('* * * * *', () => {
 
 let servers = [];
 try {
-    const fileContents = fs.readFileSync(path.join(APP_ROOT, 'config.json'), 'utf-8');
+    const fileContents = fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf-8');
     const configs = JSON.parse(fileContents);
     if (configs) {
         servers = configs;
