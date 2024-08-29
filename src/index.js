@@ -30,7 +30,7 @@ const TIDEProjectsDIR = process.env.PROJECTS_DIR || path.join(APP_ROOT, 'TIDEPro
 
 const jobs = {};
 
-cron.schedule('* * * * *', () => {
+cron.schedule('*/20 * * * *', () => {
     const items = fs.readdirSync(TIDEProjectsDIR);
     const currentTime = new Date();
     for (let i = 0; i < items.length; i++) {
@@ -298,14 +298,14 @@ async function buildTide(job) {
     try {
         console.log(ccmd);
         const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: 60000, shell: true });
-        exec.on('error', (error) => {
-            console.log(error);
-        });
         if (!exec.pid) {
             return 'error';
         }
         pid = exec.pid.toString();
         const result = await new Promise((resolve, reject) => {
+            exec.on('error', (error) => {
+                reject();
+            });
             exec.on('exit', () => {
                 // const compileData = globalThis.compileData.get(pid);
                 if (!fs.existsSync(tpcPath)) {
@@ -321,6 +321,7 @@ async function buildTide(job) {
                 });
             });
             exec.stdout.pipe(dStream);
+            exec.stderr.pipe(dStream);
         });
         return result;
     } catch (ex) {
@@ -430,14 +431,14 @@ async function buildZephyr(job) {
 
     try {
         const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: 60000, shell: true });
-        exec.on('error', (error) => {
-            console.log(error);
-        });
         if (!exec.pid) {
             return 'error';
         }
         pid = exec.pid.toString();
         const result = await new Promise((resolve, reject) => {
+            exec.on('error', (error) => {
+                reject();
+            });
             exec.on('exit', () => {
                 // const compileData = globalThis.compileData.get(pid);
                 job.result.output = compileOutput;
@@ -459,6 +460,7 @@ async function buildZephyr(job) {
                 });
             });
             exec.stdout.pipe(dStream);
+            exec.stderr.pipe(dStream);
         });
         return result;
     } catch (ex) {
