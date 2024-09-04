@@ -78,11 +78,20 @@ try {
                 socket.emit('update', {
                     key: server.key,
                     capabilities: jobTypes,
+                    jobs: Object.keys(jobs),
                 });
                 Object.keys(jobs).forEach((job) => {
                     socket.emit('job', job);
                     delete jobs[job.id];
                 });
+            });
+
+            socket.on('update', (job) => {
+                if (job.status === 'cancelled') {
+                    if (jobs[job.id]) {
+                        jobs[job.id].status = 'cancelled';
+                    }
+                }
             });
 
             socket.on('job', async (job) => {
@@ -94,6 +103,10 @@ try {
                     let result;
                     jobs[job.id] = job;
                     const outputInterval = setInterval(() => {
+                        if (jobs[job.id].status === 'cancelled') {
+                            clearInterval(outputInterval);
+                            process.kill(jobs[job.id].pid);
+                        }
                         if (socket.connected) {
                             if (job.result && (job.result.output || job.progress)) {
                                 socket.emit('job', {
@@ -302,6 +315,7 @@ async function buildTide(job) {
             return 'error';
         }
         pid = exec.pid.toString();
+        job.pid = pid;
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
                 reject();
@@ -435,6 +449,7 @@ async function buildZephyr(job) {
             return 'error';
         }
         pid = exec.pid.toString();
+        job.pid = pid;
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
                 reject();
