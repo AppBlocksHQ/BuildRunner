@@ -46,8 +46,17 @@ cron.schedule('*/20 * * * *', () => {
 
 let servers = [];
 try {
-    const fileContents = fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf-8');
-    const configs = JSON.parse(fileContents);
+    const configPath = path.join(__dirname, '..', 'config.json');
+    let configs = [];
+    if (fs.existsSync(configPath)) {
+        const fileContents = fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf-8');
+        configs = JSON.parse(fileContents);
+    } else {
+        configs.push({
+            url: process.env.API_URL,
+            key: process.env.WORKER_KEY,
+        });
+    }
     if (configs) {
         servers = configs;
         for (let i = 0; i < servers.length; i += 1) {
