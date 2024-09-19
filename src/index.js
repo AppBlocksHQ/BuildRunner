@@ -107,16 +107,14 @@ try {
                             clearInterval(outputInterval);
                             process.kill(jobs[job.id].pid);
                         }
-                        if (socket.connected) {
-                            if (job.result && (job.result.output || job.progress)) {
-                                socket.emit('job', {
-                                    ...job,
-                                    result: {
-                                        output: job.result.output,
-                                    },
-                                    progress: job.progress,
-                                });
-                            }
+                        if (job.result && (job.result.output || job.progress)) {
+                            socket.emit('job', {
+                                ...job,
+                                result: {
+                                    output: job.result.output,
+                                },
+                                progress: job.progress,
+                            });
                         }
                     }, 1000);
                     switch (job.type) {
