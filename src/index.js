@@ -114,7 +114,10 @@ try {
                     const outputInterval = setInterval(() => {
                         if (jobs[job.id].status === 'cancelled') {
                             clearInterval(outputInterval);
-                            process.kill(jobs[job.id].pid);
+                            job.process.stdout.destroy();
+                            job.process.stderr.destroy();
+                            job.process.kill('SIGINT');
+                            // process.kill(jobs[job.id].pid);
                         }
                         if (job.result && (job.result.output || job.progress)) {
                             socket.emit('job', {
@@ -323,6 +326,7 @@ async function buildTide(job) {
         }
         pid = exec.pid.toString();
         job.pid = pid;
+        job.process = exec;
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
                 reject();
@@ -457,6 +461,7 @@ async function buildZephyr(job) {
         }
         pid = exec.pid.toString();
         job.pid = pid;
+        job.process = exec;
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
                 reject();
