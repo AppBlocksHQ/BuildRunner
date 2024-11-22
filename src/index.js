@@ -112,7 +112,7 @@ try {
                     let result;
                     jobs[job.id] = job;
                     const outputInterval = setInterval(() => {
-                        if (jobs[job.id].status === 'cancelled') {
+                        if (jobs[job.id] && jobs[job.id].status === 'cancelled') {
                             clearInterval(outputInterval);
                             job.process.stdout.destroy();
                             job.process.stderr.destroy();
@@ -416,6 +416,9 @@ async function buildZephyr(job) {
     }
     await fs.outputFile(path.join(projectPath, 'files.json'), JSON.stringify(files));
     ccmd = `docker run --rm -v ${zephyrProjectPath}:/workdir -v ${projectPath}:/workdir/${shortPath} ghcr.io/zephyrproject-rtos/ci:latest /bin/bash -c "cd /workdir && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build"`;
+    if (fs.existsSync(path.join(__dirname, '..', 'zephyrBuild.sh'))) {
+        ccmd = `./zephyrBuild.sh ${shortPath} ${project.zephyrName}`;
+    }
     console.log(ccmd);
 
     if (fs.existsSync(tpcPath)) {
@@ -464,15 +467,16 @@ async function buildZephyr(job) {
         job.process = exec;
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
-                reject();
+                reject(error);
             });
             exec.on('exit', () => {
                 // const compileData = globalThis.compileData.get(pid);
                 job.result.output = compileOutput;
                 const exitCode = exec.exitCode;
                 if (exitCode !== 0 && !fs.existsSync(tpcPath)) {
-                    return reject();
+                    return reject(exec.exitCode);
                 }
+                console.log('job for ' + projectPath + ' completed');
                 let hex;
                 if (fs.existsSync(path.join(projectPath, 'build', 'zephyr', 'zephyr.hex'))) {
                     hex = fs.readFileSync(path.join(projectPath, 'build', 'zephyr', 'zephyr.hex'));
@@ -491,6 +495,8 @@ async function buildZephyr(job) {
         });
         return result;
     } catch (ex) {
+        console.log('job for ' + projectPath + ' failed');
+        console.log(ex);
         return {
             status: 'failed',
             output: compileOutput,
