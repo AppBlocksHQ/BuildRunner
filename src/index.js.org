@@ -30,23 +30,19 @@ const TIDEProjectsDIR = process.env.PROJECTS_DIR || path.join(APP_ROOT, 'TIDEPro
 
 const jobs = {};
 
-// cron.schedule('*/1 * * * *', () => {
+cron.schedule('*/20 * * * *', () => {
     const items = fs.readdirSync(TIDEProjectsDIR);
     const currentTime = new Date();
     for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const stats = fs.statSync(path.join(TIDEProjectsDIR, item));
-        // Get the modified time of path 'TIDEProjectsDIR/item'
         const mtime = new Date(stats.mtime);
-        // Get the time difference between 'currentTime and mtime
         const elapsed = (currentTime.getTime() - mtime.getTime()) / 1000;
-
         if (elapsed > 3 * 60 && item !== '.gitkeep') {
             rimraf.sync(path.join(TIDEProjectsDIR, item));
-            console.log(path.join(TIDEProjectsDIR, item));
         }
     }
-// });
+});
 
 let servers = [];
 try {
@@ -469,17 +465,6 @@ async function buildZephyr(job) {
         pid = exec.pid.toString();
         job.pid = pid;
         job.process = exec;
-    
-        // // Newly added: Listeners for stdout and stderr to capture and display output
-        // exec.stdout.on('data', (data) => {
-        //     console.log(`stdout: ${data.toString()}`);
-        // });
-    
-        // exec.stderr.on('data', (data) => {
-        //     console.error(`stderr: ${data.toString()}`);
-        // });
-        // // End of newly added section
-    
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
                 reject(error);
@@ -505,12 +490,9 @@ async function buildZephyr(job) {
                     output: compileOutput,
                 });
             });
-    
-            // Preserve existing streams for logs or redirection
             exec.stdout.pipe(dStream);
             exec.stderr.pipe(dStream);
         });
-    
         return result;
     } catch (ex) {
         console.log('job for ' + projectPath + ' failed');
@@ -520,5 +502,4 @@ async function buildZephyr(job) {
             output: compileOutput,
         };
     }
-    
 }
