@@ -12,46 +12,46 @@ const rimraf = require('rimraf');
 
 
 //---FUNCTIONS
-function addProjectCronChkToFilesWrites(job) {
-    // Extract the `project` object from the job's input
-    const project = job.input.project;
+// function addProjectCronChkToFilesWrites(job) {
+//     // Extract the `project` object from the job's input
+//     const project = job.input.project;
 
-    // Generate a pseudo-unique identifier (puuid) by concatenating two random strings
-    let puuid = Math.random().toString(36).substring(2, 15)
-        + Math.random().toString(36).substring(2, 15);
+//     // Generate a pseudo-unique identifier (puuid) by concatenating two random strings
+//     let puuid = Math.random().toString(36).substring(2, 15)
+//         + Math.random().toString(36).substring(2, 15);
 
-    // Check if the `project` object is defined, has a valid `id`, 
-    // and the `id` is not equal to 'newtemp'
-    // If these conditions are met, override the generated `puuid` with `project.id`
-    if (project && project.id && project.id !== 'newtemp') {
-        puuid = project.id;
-    }
+//     // Check if the `project` object is defined, has a valid `id`, 
+//     // and the `id` is not equal to 'newtemp'
+//     // If these conditions are met, override the generated `puuid` with `project.id`
+//     if (project && project.id && project.id !== 'newtemp') {
+//         puuid = project.id;
+//     }
 
-    // Define the project path with 'puuid' as foldername
-    const projectPath = path.join(tempPath, puuid);
+//     // Define the project path with 'puuid' as foldername
+//     const projectPath = path.join(tempPath, puuid);
 
-    // Define the filename for the cron check file (e.g., 674052487db4c07aa36720c7_cron.chk)
-    const projectCronChkFilename = puuid + UNDERSCORE_CRON_DOT_CHK;
+//     // Define the filename for the cron check file (e.g., 674052487db4c07aa36720c7_cron.chk)
+//     const projectCronChkFilename = puuid + UNDERSCORE_CRON_DOT_CHK;
 
-    // Construct the full file path for the cron check file
-    const projectCronChkFpath = path.join(projectPath, projectCronChkFilename);
+//     // Construct the full file path for the cron check file
+//     const projectCronChkFpath = path.join(projectPath, projectCronChkFilename);
 
-    // Define the content for the cron check file
-    // This content is used to indicate that the file tracks the last modified datetime (mtime) of the folder identified by `puuid`
-    const cronFileContent = "This file is used to keep track of the modified datetime (mtime) of folder '" + puuid + "'";
+//     // Define the content for the cron check file
+//     // This content is used to indicate that the file tracks the last modified datetime (mtime) of the folder identified by `puuid`
+//     const cronFileContent = "This file is used to keep track of the modified datetime (mtime) of folder '" + puuid + "'";
 
-    // Add a task to write the cron check file to disk
-    // If writing fails, log an error message with details about the failure
-    const fileWrites = [];
-    fileWrites.push(
-        fs.outputFile(projectCronChkFpath, cronFileContent).catch((err) => {
-            console.error(`Error writing ${projectCronChkFpath}: ${err.message}`);
-        })
-    );
+//     // Add a task to write the cron check file to disk
+//     // If writing fails, log an error message with details about the failure
+//     const fileWrites = [];
+//     fileWrites.push(
+//         fs.outputFile(projectCronChkFpath, cronFileContent).catch((err) => {
+//             console.error(`Error writing ${projectCronChkFpath}: ${err.message}`);
+//         })
+//     );
 
-    // Return both `fileWrites` and `puuid` in an object
-    return { fileWrites, puuid };
-}
+//     // Return both `fileWrites` and `puuid` in an object
+//     return { fileWrites, puuid };
+// }
 
 
 
@@ -86,28 +86,64 @@ const CRON_INTERVAL_MINUTES = 20;
 cron.schedule(`*/${CRON_INTERVAL_MINUTES} * * * *`, () => {
     const items = fs.readdirSync(tempPath);
     const currentTime = new Date();
-    // Iterate thru all the files/folders under directory 'TIDEProjectsDIR'
+
     for (let i = 0; i < items.length; i++) {
         const item = items[i];
-        // Define project path (in this case 'item' is the 'puuid', which is the foldername )
         const projectPath = path.join(tempPath, item);
-        // Define the fullpath of the '_cron.chk' filename
         const projectCronChkFpath = path.join(projectPath, item + UNDERSCORE_CRON_DOT_CHK);
-        
-        const stats = fs.statSync(projectCronChkFpath);
 
-        // Get the modified time of path 'TIDEProjectsDIR/item'
+        // Check if the projectPath exists, if not, continue to the next item
+        if (!fs.existsSync(projectPath)) {
+            continue;
+        }
+
+        // Check if the cron check file exists
+        if (!fs.existsSync(projectCronChkFpath)) {
+            rimraf.sync(projectPath);
+            continue;
+        }
+
+        // Get file stats and calculate elapsed time
+        const stats = fs.statSync(projectCronChkFpath);
         const mtime = new Date(stats.mtime);
-        // Get the time difference between 'currentTime and mtime
         const elapsed = (currentTime.getTime() - mtime.getTime()) / 1000;
 
+        // Remove the folder if it exceeds the CRON interval and is not '.gitkeep'
         if (elapsed > (CRON_INTERVAL_MINUTES * 60) && item !== '.gitkeep') {
             rimraf.sync(projectPath);
-            console.log(`Removed folder older than ${CRON_INTERVAL_MINUTES}-min:` + projectPath);
+            console.log(`Removed folder older than ${CRON_INTERVAL_MINUTES}-min: ${projectPath}`);
         }
     }
 });
 
+const addProjectCronChkToFilesWrites = (job) => {
+    const project = job.input.project;
+
+    // Generate a pseudo-unique identifier (puuid) by concatenating two random strings
+    let puuid = Math.random().toString(36).substring(2, 15)
+        + Math.random().toString(36).substring(2, 15);
+
+    // Check if the `project` object is defined, has a valid `id`, 
+    // and the `id` is not equal to 'newtemp'
+    // If these conditions are met, override the generated `puuid` with `project.id`
+    if (project && project.id && project.id !== 'newtemp') {
+        puuid = project.id;
+    }
+
+    // Build paths and file content
+    const projectPath = path.join(tempPath, puuid);
+    const projectCronChkFpath = path.join(projectPath, puuid + UNDERSCORE_CRON_DOT_CHK);
+    const cronFileContent = `This file is used to keep track of the modified datetime (mtime) of folder '${puuid}'`;
+
+    // Write cron check file and handle errors
+    const fileWrites = [
+        fs.outputFile(projectCronChkFpath, cronFileContent).catch((err) => {
+            console.error(`Error writing ${projectCronChkFpath}: ${err.message}`);
+        })
+    ];
+
+    return { fileWrites, puuid };
+};
 
 const jobs = {};
 let servers = [];
@@ -233,6 +269,7 @@ try {
     console.log('unable to read config.json');
 }
 
+
 async function buildTide(job, puuid, fileWrites) {
     let PATH_TMAKE = '/home/tibbo/.wine/drive_c/Program Files/Tibbo/TIDE/Bin/tmake.exe';
     const project = job.input.project;
@@ -244,11 +281,6 @@ async function buildTide(job, puuid, fileWrites) {
     let pdbPath = '';
     let projectPath = '';
     const options = '';
-    // let puuid = Math.random().toString(36).substring(2, 15)
-    //     + Math.random().toString(36).substring(2, 15);
-    // if (project && project.id && project.id !== 'newtemp') {
-    //     puuid = project.id;
-    // }
 
     if (!fs.existsSync(TIDEProjectsDIR)) {
         fs.mkdirSync(TIDEProjectsDIR);
@@ -260,13 +292,11 @@ async function buildTide(job, puuid, fileWrites) {
 
 
     // check project folder
-
     if (!fs.existsSync(projectPath)) {
         fs.mkdirSync(projectPath);
     }
     pdbPath = path.join(projectPath, 'tmp', 'database.pdb');
 
-    // const fileWrites = [];
     const tmpTPRPath = files.find(file => file.name === 'project.tpr');
     for (let i = 0; i < files.length; i += 1) {
         const file = files[i];
@@ -432,17 +462,11 @@ async function buildTide(job, puuid, fileWrites) {
 async function buildZephyr(job, puuid, fileWrites) {
     const project = job.input.project;
     const files = job.input.files;
-    // const fileWrites = [];
     let tpcPath = '';
     let pdbPath = '';
     let projectPath = '';
     let shortPath = '';
     let ccmd = '';
-    // let puuid = Math.random().toString(36).substring(2, 15)
-    //     + Math.random().toString(36).substring(2, 15);
-    // if (project && project.id && project.id !== 'newtemp') {
-    //     puuid = project.id;
-    // } 
 
     projectPath = path.join(tempPath, puuid);
 
@@ -538,17 +562,7 @@ async function buildZephyr(job, puuid, fileWrites) {
         pid = exec.pid.toString();
         job.pid = pid;
         job.process = exec;
-    
-        // // Newly added: Listeners for stdout and stderr to capture and display output
-        // exec.stdout.on('data', (data) => {
-        //     console.log(`stdout: ${data.toString()}`);
-        // });
-    
-        // exec.stderr.on('data', (data) => {
-        //     console.error(`stderr: ${data.toString()}`);
-        // });
-        // // End of newly added section
-    
+
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
                 reject(error);

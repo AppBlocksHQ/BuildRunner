@@ -29,3 +29,6 @@ TIDEProjects
 config.json
 
 zephyrBuild.sh
+
+run_BuildRunner.sh
+stop_BuildRunner.sh
