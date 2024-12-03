@@ -11,50 +11,6 @@ const rimraf = require('rimraf');
 
 
 
-//---FUNCTIONS
-// function addProjectCronChkToFilesWrites(job) {
-//     // Extract the `project` object from the job's input
-//     const project = job.input.project;
-
-//     // Generate a pseudo-unique identifier (puuid) by concatenating two random strings
-//     let puuid = Math.random().toString(36).substring(2, 15)
-//         + Math.random().toString(36).substring(2, 15);
-
-//     // Check if the `project` object is defined, has a valid `id`, 
-//     // and the `id` is not equal to 'newtemp'
-//     // If these conditions are met, override the generated `puuid` with `project.id`
-//     if (project && project.id && project.id !== 'newtemp') {
-//         puuid = project.id;
-//     }
-
-//     // Define the project path with 'puuid' as foldername
-//     const projectPath = path.join(tempPath, puuid);
-
-//     // Define the filename for the cron check file (e.g., 674052487db4c07aa36720c7_cron.chk)
-//     const projectCronChkFilename = puuid + UNDERSCORE_CRON_DOT_CHK;
-
-//     // Construct the full file path for the cron check file
-//     const projectCronChkFpath = path.join(projectPath, projectCronChkFilename);
-
-//     // Define the content for the cron check file
-//     // This content is used to indicate that the file tracks the last modified datetime (mtime) of the folder identified by `puuid`
-//     const cronFileContent = "This file is used to keep track of the modified datetime (mtime) of folder '" + puuid + "'";
-
-//     // Add a task to write the cron check file to disk
-//     // If writing fails, log an error message with details about the failure
-//     const fileWrites = [];
-//     fileWrites.push(
-//         fs.outputFile(projectCronChkFpath, cronFileContent).catch((err) => {
-//             console.error(`Error writing ${projectCronChkFpath}: ${err.message}`);
-//         })
-//     );
-
-//     // Return both `fileWrites` and `puuid` in an object
-//     return { fileWrites, puuid };
-// }
-
-
-
 //---PARAMETERS
 let workerInterval;
 
