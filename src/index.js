@@ -9,12 +9,75 @@ const ini = require('ini');
 const dotenv = require('dotenv');
 const rimraf = require('rimraf');
 
+const psTree = require('ps-tree');
+
+
+
+//---FUNCTIONS
+async function getChildPids(job) {
+    try {
+        // Wait for a short delay to ensure child processes are started
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Retrieve the child processes using psTree wrapped in a Promise
+        const children = await new Promise((resolve, reject) => {
+            psTree(job.pid, (err, children) => {
+                if (err) {
+                    return reject(err); // Reject the promise on error
+                }
+                resolve(children); // Resolve the promise with the children
+            });
+        });
+
+        // Extract and return the PIDs of the child processes
+        const pids = children.map(child => child.PID);
+        return pids;
+    } catch (err) {
+        console.error('Error retrieving child processes:', err);
+        return [];
+    }
+}
+
+function killAllPids(job) {
+    // Destroy stdout and stderr of the job's process
+    if (job && job.process) {
+        job.process.stdout.destroy();
+        job.process.stderr.destroy();
+    }
+
+    // Kill parentPid
+    const parentPid = job.pid
+    if (parentPid) {
+        try {
+            process.kill(parentPid);
+        } catch (err) {
+            // An error occurs if 'childPid' does not
+            console.error(`(IGNORE) Error killing parentPid: ${parentPid}`);
+            console.log(`Reason: parentPid ${parentPid} already terminated!`);   
+        }
+    }
+
+    // Kill childPids
+    if (job.childPids) {
+        for (const childPid of job.childPids) {
+            if (childPid) {
+                try {
+                    process.kill(childPid);
+                } catch (err) {
+                    // An error occurs if 'childPid' does not
+                    console.error(`(IGNORE) Error killing childPid: ${childPid}`);
+                    console.log(`Reason: childPid ${childPid} already terminated!`);
+                    
+                    continue;
+                }
+            }
+        }
+    }
+}
+
 
 
 //---PARAMETERS
-let workerInterval;
-
-
 let APP_ROOT = path.join(__dirname, '..');
 // detect if running in appblocks
 if (fs.existsSync(path.join(__dirname, '..', '..', '..', 'package.json'))) {
@@ -168,14 +231,12 @@ try {
                 }
                 try {
                     let result;
-                    jobs[job.id] = job;
+                    jobs[job.id] = job; // add pair 'job.id' and 'job' to dictionary 'jobs'
                     const outputInterval = setInterval(() => {
                         if (jobs[job.id] && jobs[job.id].status === 'cancelled') {
                             clearInterval(outputInterval);
-                            job.process.stdout.destroy();
-                            job.process.stderr.destroy();
-                            job.process.kill('SIGINT');
-                            // process.kill(jobs[job.id].pid);
+
+                            killAllPids(jobs[job.id]);
                         }
                         if (job.result && (job.result.output || job.progress)) {
                             socket.emit('job', {
@@ -225,7 +286,7 @@ try {
     console.log('unable to read config.json');
 }
 
-
+const BUILDTIDE_SPAWN_TIMEOUT = 60000;
 async function buildTide(job, puuid, fileWrites) {
     let PATH_TMAKE = '/home/tibbo/.wine/drive_c/Program Files/Tibbo/TIDE/Bin/tmake.exe';
     const project = job.input.project;
@@ -378,7 +439,7 @@ async function buildTide(job, puuid, fileWrites) {
 
     try {
         console.log(ccmd);
-        const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: 60000, shell: true });
+        const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: BUILDTIDE_SPAWN_TIMEOUT, shell: true });
         if (!exec.pid) {
             return 'error';
         }
@@ -415,6 +476,9 @@ async function buildTide(job, puuid, fileWrites) {
     }
 }
 
+
+
+const BUILDZEPHYR_SPAWN_TIMEOUT = 60000;
 async function buildZephyr(job, puuid, fileWrites) {
     const project = job.input.project;
     const files = job.input.files;
@@ -511,13 +575,16 @@ async function buildZephyr(job, puuid, fileWrites) {
     });
 
     try {
-        const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: 60000, shell: true });
+        const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: BUILDZEPHYR_SPAWN_TIMEOUT, shell: true });
         if (!exec.pid) {
             return 'error';
         }
         pid = exec.pid.toString();
         job.pid = pid;
         job.process = exec;
+
+        // After a short delay, retrieve child processes
+        jobs[job.id].childPids = await getChildPids(jobs[job.id]);
 
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
@@ -549,11 +616,16 @@ async function buildZephyr(job, puuid, fileWrites) {
             exec.stdout.pipe(dStream);
             exec.stderr.pipe(dStream);
         });
-    
+
+        killAllPids(jobs[job.id]);
+
         return result;
     } catch (ex) {
         console.log('job for ' + projectPath + ' failed');
-        console.log(ex);
+        console.log(`'ex: ${ex}`);
+
+        killAllPids(jobs[job.id]);
+
         return {
             status: 'failed',
             output: compileOutput,
