@@ -14,27 +14,17 @@ const psTree = require('ps-tree');
 
 
 //---FUNCTIONS
-async function getChildPids(job) {
+function removeDir(job) {
+    const targetDir = jobs[job.id].projectPah;
+
+    if (!fs.pathExistsSync(targetDir)) {
+        return;
+    }
+
     try {
-        // Wait for a short delay to ensure child processes are started
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // Retrieve the child processes using psTree wrapped in a Promise
-        const children = await new Promise((resolve, reject) => {
-            psTree(job.pid, (err, children) => {
-                if (err) {
-                    return reject(err); // Reject the promise on error
-                }
-                resolve(children); // Resolve the promise with the children
-            });
-        });
-
-        // Extract and return the PIDs of the child processes
-        const pids = children.map(child => child.PID);
-        return pids;
+        fs.removeSync(targetDir);
     } catch (err) {
-        console.error('Error retrieving child processes:', err);
-        return [];
+        console.error('removeDir error due to', err);
     }
 }
 
@@ -47,37 +37,40 @@ function killAllPids(job) {
 
     // Kill parentPid
     const parentPid = job.pid
-    if (parentPid) {
-        try {
-            process.kill(parentPid);
-        } catch (err) {
-            // An error occurs if 'childPid' does not
-            console.error(`(IGNORE) Error killing parentPid: ${parentPid}`);
-            console.log(`Reason: parentPid ${parentPid} already terminated!`);   
-        }
+    if (!parentPid) {
+        return;
     }
 
-    // Kill childPids
-    if (job.childPids) {
-        for (const childPid of job.childPids) {
-            if (childPid) {
-                try {
-                    process.kill(childPid);
-                } catch (err) {
-                    // An error occurs if 'childPid' does not
-                    console.error(`(IGNORE) Error killing childPid: ${childPid}`);
-                    console.log(`Reason: childPid ${childPid} already terminated!`);
-                    
-                    continue;
-                }
-            }
+    try {
+        process.kill(parentPid);
+    } catch (err) {
+        // An error occurs if 'childPid' does not
+        console.error(`(IGNORE) Error killing parentPid: ${parentPid}`);
+        console.log(`Reason: parentPid ${parentPid} already terminated!`);
+        return;
+    }
+
+    if (!job.childPids) {
+        return;
+    }
+
+    for (const childPid of job.childPids) {
+        try {
+            process.kill(childPid);
+        } catch (err) {
+            // An error occurs if 'childPid' does not
+            console.error(`(IGNORE) Error killing childPid: ${childPid}`);
+            console.log(`Reason: childPid ${childPid} already terminated!`);
+            
+            continue;
         }
     }
 }
 
 
 
-//---PARAMETERS
+//---PATHS
+// Get 'BuildRunner' Path
 let APP_ROOT = path.join(__dirname, '..');
 // detect if running in appblocks
 if (fs.existsSync(path.join(__dirname, '..', '..', '..', 'package.json'))) {
@@ -87,20 +80,24 @@ if (fs.existsSync(path.join(__dirname, '..', '..', '..', 'package.json'))) {
         APP_ROOT = path.join(__dirname, '..', '..', '..');
     }
 }
-
 console.log(APP_ROOT);
 
+// Get '.env' Path
 const envFilePath = path.join(APP_ROOT, '.env');
 dotenv.config({ path: envFilePath });
 
-
-// Get 'TIDEProjects' path
+// Get 'TIDEProjects' Path
 const TIDEProjectsDIR = process.env.PROJECTS_DIR || path.join(APP_ROOT, 'TIDEProjects');
-// Define 'temp' path
+// Get 'temp' Path
 const tempPath = path.join(TIDEProjectsDIR, 'temp');
-// Define '_cron.chk'
+// Set constant 'UNDERSCORE_CRON_DOT_CHK'
 const UNDERSCORE_CRON_DOT_CHK = '_cron.chk'
 // Define the interval in minutes
+
+
+
+//---INLINE FUNCTIONS
+// cron-schedule
 const CRON_INTERVAL_MINUTES = 20;
 cron.schedule(`*/${CRON_INTERVAL_MINUTES} * * * *`, () => {
     const items = fs.readdirSync(tempPath);
@@ -135,6 +132,7 @@ cron.schedule(`*/${CRON_INTERVAL_MINUTES} * * * *`, () => {
     }
 });
 
+// Create temporary file
 const addProjectCronChkToFilesWrites = (job) => {
     const project = job.input.project;
 
@@ -163,6 +161,36 @@ const addProjectCronChkToFilesWrites = (job) => {
 
     return { fileWrites, puuid };
 };
+
+// Get childPids
+const getChildPids = async (job) => {
+    try {
+        // Retrieve the child processes using psTree wrapped in a Promise
+        const children = await new Promise((resolve, reject) => {
+            psTree(job.pid, (err, children) => {
+                if (err) {
+                    return reject(err); // Reject the promise on error
+                }
+                resolve(children); // Resolve the promise with the children
+            });
+        });
+
+        // 
+        if (!children) {
+            return [];
+        }
+
+        // Extract and return the PIDs of the child processes
+        const pids = children.map(child => child.PID);
+
+        return pids;
+    } catch (err) {
+        console.error('Error retrieving child processes:', err);
+        return [];
+  }
+};
+
+
 
 const jobs = {};
 let servers = [];
@@ -229,15 +257,32 @@ try {
                 if (!job) {
                     return;
                 }
+
                 try {
                     let result;
-                    jobs[job.id] = job; // add pair 'job.id' and 'job' to dictionary 'jobs'
+                    jobs[job.id] = job;
                     const outputInterval = setInterval(() => {
+                        // Section: childPids
+                        if (jobs[job.id]) {
+                            // Call the getChildPids function which returns a Promise
+                            getChildPids(jobs[job.id])
+                                // When the Promise resolves successfully, this .then callback is executed
+                                .then((childPids) => {
+                                    // Assign the resolved value (childPids) to jobs[job.id].childPids
+                                    jobs[job.id].childPids = childPids;
+                                })
+                                // If the Promise is rejected (an error occurs), this .catch callback is executed
+                                .catch((err) => {
+                                    console.error('(IGNORE) getChildPids error due to', err);
+                                });
+                        }
+                        // Section: cancelled
                         if (jobs[job.id] && jobs[job.id].status === 'cancelled') {
                             clearInterval(outputInterval);
 
                             killAllPids(jobs[job.id]);
                         }
+                        // Section: result, output, progress
                         if (job.result && (job.result.output || job.progress)) {
                             socket.emit('job', {
                                 ...job,
@@ -305,8 +350,11 @@ async function buildTide(job, puuid, fileWrites) {
     if (!fs.existsSync(tempPath)) {
         fs.mkdirSync(tempPath);
     }
+
     projectPath = path.join(tempPath, puuid);
 
+    // Add 'projectPath' to dictionary 'jobs' for the current 'job.id'
+    jobs[job.id].projectPath = projectPath;
 
     // check project folder
     if (!fs.existsSync(projectPath)) {
@@ -490,6 +538,9 @@ async function buildZephyr(job, puuid, fileWrites) {
 
     projectPath = path.join(tempPath, puuid);
 
+    // Add 'projectPath' to dictionary 'jobs' for the current 'job.id'
+    jobs[job.id].projectPath = projectPath;
+
     for (let i = 0; i < files.length; i += 1) {
         const file = files[i];
         const filePath = path.join(projectPath, file.name);
@@ -583,9 +634,6 @@ async function buildZephyr(job, puuid, fileWrites) {
         job.pid = pid;
         job.process = exec;
 
-        // After a short delay, retrieve child processes
-        jobs[job.id].childPids = await getChildPids(jobs[job.id]);
-
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
                 reject(error);
@@ -617,19 +665,18 @@ async function buildZephyr(job, puuid, fileWrites) {
             exec.stderr.pipe(dStream);
         });
 
-        killAllPids(jobs[job.id]);
-
         return result;
     } catch (ex) {
         console.log('job for ' + projectPath + ' failed');
         console.log(`'ex: ${ex}`);
 
-        killAllPids(jobs[job.id]);
-
         return {
             status: 'failed',
             output: compileOutput,
         };
+    } finally {
+        if (jobs && job && job.id) {
+            killAllPids(jobs[job.id]);
+        }
     }
-    
 }
