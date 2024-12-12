@@ -261,20 +261,10 @@ try {
                 try {
                     let result;
                     jobs[job.id] = job;
-                    const outputInterval = setInterval(() => {
+                    const outputInterval = setInterval(async () => {
                         // Section: childPids
                         if (jobs[job.id]) {
-                            // Call the getChildPids function which returns a Promise
-                            getChildPids(jobs[job.id])
-                                // When the Promise resolves successfully, this .then callback is executed
-                                .then((childPids) => {
-                                    // Assign the resolved value (childPids) to jobs[job.id].childPids
-                                    jobs[job.id].childPids = childPids;
-                                })
-                                // If the Promise is rejected (an error occurs), this .catch callback is executed
-                                .catch((err) => {
-                                    console.error('(IGNORE) getChildPids error due to', err);
-                                });
+                            jobs[job.id].childPids = await getChildPids(jobs[job.id]);
                         }
                         // Section: cancelled
                         if (jobs[job.id] && jobs[job.id].status === 'cancelled') {
