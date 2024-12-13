@@ -1,4 +1,4 @@
-//---REQUIRES
+// REQUIRE
 const io = require('socket.io-client');
 const fs = require('fs-extra');
 const path = require('path');
@@ -12,8 +12,7 @@ const rimraf = require('rimraf');
 const psTree = require('ps-tree');
 
 
-
-//---FUNCTIONS
+// FUNCTIONS
 function removeDir(job) {
     const targetDir = jobs[job.id].projectPah;
 
@@ -36,7 +35,7 @@ function killAllPids(job) {
     }
 
     // Kill parentPid
-    const parentPid = job.pid
+    const parentPid = job.pid;
     if (!parentPid) {
         return;
     }
@@ -47,29 +46,28 @@ function killAllPids(job) {
         // An error occurs if 'childPid' does not
         console.error(`(IGNORE) Error killing parentPid: ${parentPid}`);
         console.log(`Reason: parentPid ${parentPid} already terminated!`);
-        return;
+
+        // Do NOT return, but continue to check whether there are
+        //  any childPids alive which need to be killed.
     }
 
     if (!job.childPids) {
         return;
     }
 
-    for (const childPid of job.childPids) {
+    job.childPids.forEach((childPid) => {
         try {
             process.kill(childPid);
         } catch (err) {
-            // An error occurs if 'childPid' does not
+            // An error occurs if 'childPid' does not exist or is already terminated
             console.error(`(IGNORE) Error killing childPid: ${childPid}`);
             console.log(`Reason: childPid ${childPid} already terminated!`);
-            
-            continue;
         }
-    }
+    });
 }
 
 
-
-//---PATHS
+//  PATHS
 // Get 'BuildRunner' Path
 let APP_ROOT = path.join(__dirname, '..');
 // detect if running in appblocks
@@ -91,12 +89,11 @@ const TIDEProjectsDIR = process.env.PROJECTS_DIR || path.join(APP_ROOT, 'TIDEPro
 // Get 'temp' Path
 const tempPath = path.join(TIDEProjectsDIR, 'temp');
 // Set constant 'UNDERSCORE_CRON_DOT_CHK'
-const UNDERSCORE_CRON_DOT_CHK = '_cron.chk'
+const UNDERSCORE_CRON_DOT_CHK = '_cron.chk';
 // Define the interval in minutes
 
 
-
-//---INLINE FUNCTIONS
+// INLINE FUNCTIONS
 // cron-schedule
 const CRON_INTERVAL_MINUTES = 20;
 cron.schedule(`*/${CRON_INTERVAL_MINUTES} * * * *`, () => {
@@ -140,7 +137,7 @@ const addProjectCronChkToFilesWrites = (job) => {
     let puuid = Math.random().toString(36).substring(2, 15)
         + Math.random().toString(36).substring(2, 15);
 
-    // Check if the `project` object is defined, has a valid `id`, 
+    // Check if the `project` object is defined, has a valid `id`,
     // and the `id` is not equal to 'newtemp'
     // If these conditions are met, override the generated `puuid` with `project.id`
     if (project && project.id && project.id !== 'newtemp') {
@@ -156,7 +153,7 @@ const addProjectCronChkToFilesWrites = (job) => {
     const fileWrites = [
         fs.outputFile(projectCronChkFpath, cronFileContent).catch((err) => {
             console.error(`Error writing ${projectCronChkFpath}: ${err.message}`);
-        })
+        }),
     ];
 
     return { fileWrites, puuid };
@@ -175,7 +172,6 @@ const getChildPids = async (job) => {
             });
         });
 
-        // 
         if (!children) {
             return [];
         }
@@ -185,11 +181,10 @@ const getChildPids = async (job) => {
 
         return pids;
     } catch (err) {
-        console.error('Error retrieving child processes:', err);
+        console.error('Error retrieving child processes due to', err);
         return [];
-  }
+    }
 };
-
 
 
 const jobs = {};
@@ -268,6 +263,7 @@ try {
                         }
                         // Section: cancelled
                         if (jobs[job.id] && jobs[job.id].status === 'cancelled') {
+                            console.log('Build--->>>CANCELLED');
                             clearInterval(outputInterval);
 
                             killAllPids(jobs[job.id]);
@@ -285,9 +281,11 @@ try {
                     }, 1000);
 
 
-                    // Call the function `addProjectCronChkToFilesWrites` and destructure the returned object
-                    // This will extract `fileWrites` (an array of file write tasks) and `puuid` (the project unique identifier)
-                    let { fileWrites, puuid } = addProjectCronChkToFilesWrites(job);
+                    // Call the function `addProjectCronChkToFilesWrites`
+                    //  and destructure the returned object.
+                    // This will extract `fileWrites` (an array of file write tasks)
+                    //  and `puuid` (the project unique identifier).
+                    const { fileWrites, puuid } = addProjectCronChkToFilesWrites(job);
 
                     switch (job.type) {
                         case 'build:tios':
@@ -484,6 +482,8 @@ async function buildTide(job, puuid, fileWrites) {
         pid = exec.pid.toString();
         job.pid = pid;
         job.process = exec;
+        jobs[job.id].pid = pid;
+
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
                 reject();
@@ -507,13 +507,19 @@ async function buildTide(job, puuid, fileWrites) {
         });
         return result;
     } catch (ex) {
+        console.log(`job for ${projectPath} failed`);
+        console.log(`'ex: ${ex}`);
+
         return {
             status: 'failed',
             output: compileOutput,
         };
+    } finally {
+        if (jobs && job && job.id) {
+            killAllPids(jobs[job.id]);
+        }
     }
 }
-
 
 
 const BUILDZEPHYR_SPAWN_TIMEOUT = 60000;
@@ -623,6 +629,7 @@ async function buildZephyr(job, puuid, fileWrites) {
         pid = exec.pid.toString();
         job.pid = pid;
         job.process = exec;
+        jobs[job.id].pid = pid;
 
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
@@ -635,7 +642,7 @@ async function buildZephyr(job, puuid, fileWrites) {
                 if (exitCode !== 0 && !fs.existsSync(tpcPath)) {
                     return reject(exec.exitCode);
                 }
-                console.log('job for ' + projectPath + ' completed');
+                console.log(`job for ${projectPath} completed`);
                 let hex;
                 if (fs.existsSync(path.join(projectPath, 'build', 'zephyr', 'zephyr.hex'))) {
                     hex = fs.readFileSync(path.join(projectPath, 'build', 'zephyr', 'zephyr.hex'));
@@ -649,7 +656,7 @@ async function buildZephyr(job, puuid, fileWrites) {
                     output: compileOutput,
                 });
             });
-    
+
             // Preserve existing streams for logs or redirection
             exec.stdout.pipe(dStream);
             exec.stderr.pipe(dStream);
@@ -657,7 +664,7 @@ async function buildZephyr(job, puuid, fileWrites) {
 
         return result;
     } catch (ex) {
-        console.log('job for ' + projectPath + ' failed');
+        console.log(`job for ${projectPath} failed`);
         console.log(`'ex: ${ex}`);
 
         return {
