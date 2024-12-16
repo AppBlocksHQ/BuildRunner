@@ -95,7 +95,7 @@ const UNDERSCORE_CRON_DOT_CHK = '_cron.chk';
 
 // INLINE FUNCTIONS
 // cron-schedule
-const CRON_INTERVAL_MINUTES = 20;
+const CRON_INTERVAL_MINUTES = 60000;
 cron.schedule(`*/${CRON_INTERVAL_MINUTES} * * * *`, () => {
     const items = fs.readdirSync(tempPath);
     const currentTime = new Date();
