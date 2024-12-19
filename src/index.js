@@ -1,3 +1,4 @@
+// REQUIRE
 const io = require('socket.io-client');
 const fs = require('fs-extra');
 const path = require('path');
@@ -8,9 +9,66 @@ const ini = require('ini');
 const dotenv = require('dotenv');
 const rimraf = require('rimraf');
 
-let workerInterval;
+const psTree = require('ps-tree');
 
 
+// FUNCTIONS
+function removeDir(job) {
+    const targetDir = jobs[job.id].projectPah;
+
+    if (!fs.pathExistsSync(targetDir)) {
+        return;
+    }
+
+    try {
+        fs.removeSync(targetDir);
+    } catch (err) {
+        console.error('removeDir error due to', err);
+    }
+}
+
+function killAllPids(job) {
+    // Destroy stdout and stderr of the job's process
+    if (job && job.process) {
+        job.process.stdout.destroy();
+        job.process.stderr.destroy();
+    }
+
+    // Kill parentPid
+    const parentPid = job.pid;
+    if (!parentPid) {
+        return;
+    }
+
+    try {
+        process.kill(parentPid);
+    } catch (err) {
+        // An error occurs if 'childPid' does not
+        console.error(`(IGNORE) Error killing parentPid: ${parentPid}`);
+        console.log(`Reason: parentPid ${parentPid} already terminated!`);
+
+        // Do NOT return, but continue to check whether there are
+        //  any childPids alive which need to be killed.
+    }
+
+    if (!job.childPids) {
+        return;
+    }
+
+    job.childPids.forEach((childPid) => {
+        try {
+            process.kill(childPid);
+        } catch (err) {
+            // An error occurs if 'childPid' does not exist or is already terminated
+            console.error(`(IGNORE) Error killing childPid: ${childPid}`);
+            console.log(`Reason: childPid ${childPid} already terminated!`);
+        }
+    });
+}
+
+
+//  PATHS
+// Get 'BuildRunner' Path
 let APP_ROOT = path.join(__dirname, '..');
 // detect if running in appblocks
 if (fs.existsSync(path.join(__dirname, '..', '..', '..', 'package.json'))) {
@@ -20,30 +78,116 @@ if (fs.existsSync(path.join(__dirname, '..', '..', '..', 'package.json'))) {
         APP_ROOT = path.join(__dirname, '..', '..', '..');
     }
 }
-
 console.log(APP_ROOT);
 
+// Get '.env' Path
 const envFilePath = path.join(APP_ROOT, '.env');
 dotenv.config({ path: envFilePath });
 
+// Get 'TIDEProjects' Path
 const TIDEProjectsDIR = process.env.PROJECTS_DIR || path.join(APP_ROOT, 'TIDEProjects');
+// Get 'temp' Path
+const tempPath = path.join(TIDEProjectsDIR, 'temp');
+// Set constant 'UNDERSCORE_CRON_DOT_CHK'
+const UNDERSCORE_CRON_DOT_CHK = '_cron.chk';
+// Define the interval in minutes
 
-const jobs = {};
 
-cron.schedule('*/20 * * * *', () => {
-    const items = fs.readdirSync(TIDEProjectsDIR);
+// INLINE FUNCTIONS
+// cron-schedule
+const CRON_INTERVAL_MINUTES = 60000;
+cron.schedule(`*/${CRON_INTERVAL_MINUTES} * * * *`, () => {
+    const items = fs.readdirSync(tempPath);
     const currentTime = new Date();
+
     for (let i = 0; i < items.length; i++) {
         const item = items[i];
-        const stats = fs.statSync(path.join(TIDEProjectsDIR, item));
+        const projectPath = path.join(tempPath, item);
+        const projectCronChkFpath = path.join(projectPath, item + UNDERSCORE_CRON_DOT_CHK);
+
+        // Check if the projectPath exists, if not, continue to the next item
+        if (!fs.existsSync(projectPath)) {
+            continue;
+        }
+
+        // Check if the cron check file exists
+        if (!fs.existsSync(projectCronChkFpath)) {
+            rimraf.sync(projectPath);
+            continue;
+        }
+
+        // Get file stats and calculate elapsed time
+        const stats = fs.statSync(projectCronChkFpath);
         const mtime = new Date(stats.mtime);
         const elapsed = (currentTime.getTime() - mtime.getTime()) / 1000;
-        if (elapsed > 3 * 60 && item !== '.gitkeep') {
-            rimraf.sync(path.join(TIDEProjectsDIR, item));
+
+        // Remove the folder if it exceeds the CRON interval and is not '.gitkeep'
+        if (elapsed > (CRON_INTERVAL_MINUTES * 60) && item !== '.gitkeep') {
+            rimraf.sync(projectPath);
+            console.log(`Removed folder older than ${CRON_INTERVAL_MINUTES}-min: ${projectPath}`);
         }
     }
 });
 
+// Create temporary file
+const addProjectCronChkToFilesWrites = (job) => {
+    const project = job.input.project;
+
+    // Generate a pseudo-unique identifier (puuid) by concatenating two random strings
+    let puuid = Math.random().toString(36).substring(2, 15)
+        + Math.random().toString(36).substring(2, 15);
+
+    // Check if the `project` object is defined, has a valid `id`,
+    // and the `id` is not equal to 'newtemp'
+    // If these conditions are met, override the generated `puuid` with `project.id`
+    if (project && project.id && project.id !== 'newtemp') {
+        puuid = project.id;
+    }
+
+    // Build paths and file content
+    const projectPath = path.join(tempPath, puuid);
+    const projectCronChkFpath = path.join(projectPath, puuid + UNDERSCORE_CRON_DOT_CHK);
+    const cronFileContent = `This file is used to keep track of the modified datetime (mtime) of folder '${puuid}'`;
+
+    // Write cron check file and handle errors
+    const fileWrites = [
+        fs.outputFile(projectCronChkFpath, cronFileContent).catch((err) => {
+            console.error(`Error writing ${projectCronChkFpath}: ${err.message}`);
+        }),
+    ];
+
+    return { fileWrites, puuid };
+};
+
+// Get childPids
+const getChildPids = async (job) => {
+    try {
+        // Retrieve the child processes using psTree wrapped in a Promise
+        const children = await new Promise((resolve, reject) => {
+            psTree(job.pid, (err, children) => {
+                if (err) {
+                    return reject(err); // Reject the promise on error
+                }
+                resolve(children); // Resolve the promise with the children
+            });
+        });
+
+        if (!children) {
+            return [];
+        }
+
+        // Extract and return the PIDs of the child processes
+        const pids = children.map(child => child.PID);
+
+        return pids;
+    } catch (err) {
+        console.error('Error retrieving child processes due to', err);
+        return [];
+    }
+};
+
+
+const jobs = {};
 let servers = [];
 try {
     const configPath = path.join(__dirname, '..', 'config.json');
@@ -108,17 +252,23 @@ try {
                 if (!job) {
                     return;
                 }
+
                 try {
                     let result;
                     jobs[job.id] = job;
-                    const outputInterval = setInterval(() => {
-                        if (jobs[job.id] && jobs[job.id].status === 'cancelled') {
-                            clearInterval(outputInterval);
-                            job.process.stdout.destroy();
-                            job.process.stderr.destroy();
-                            job.process.kill('SIGINT');
-                            // process.kill(jobs[job.id].pid);
+                    const outputInterval = setInterval(async () => {
+                        // Section: childPids
+                        if (jobs[job.id]) {
+                            jobs[job.id].childPids = await getChildPids(jobs[job.id]);
                         }
+                        // Section: cancelled
+                        if (jobs[job.id] && jobs[job.id].status === 'cancelled') {
+                            console.log('Build--->>>CANCELLED');
+                            clearInterval(outputInterval);
+
+                            killAllPids(jobs[job.id]);
+                        }
+                        // Section: result, output, progress
                         if (job.result && (job.result.output || job.progress)) {
                             socket.emit('job', {
                                 ...job,
@@ -129,12 +279,20 @@ try {
                             });
                         }
                     }, 1000);
+
+
+                    // Call the function `addProjectCronChkToFilesWrites`
+                    //  and destructure the returned object.
+                    // This will extract `fileWrites` (an array of file write tasks)
+                    //  and `puuid` (the project unique identifier).
+                    const { fileWrites, puuid } = addProjectCronChkToFilesWrites(job);
+
                     switch (job.type) {
                         case 'build:tios':
-                            result = await buildTide(job);
+                            result = await buildTide(job, puuid, fileWrites);
                             break;
                         case 'build:zephyr':
-                            result = await buildZephyr(job);
+                            result = await buildZephyr(job, puuid, fileWrites);
                             break;
                         default:
 
@@ -161,7 +319,8 @@ try {
     console.log('unable to read config.json');
 }
 
-async function buildTide(job) {
+const BUILDTIDE_SPAWN_TIMEOUT = 60000;
+async function buildTide(job, puuid, fileWrites) {
     let PATH_TMAKE = '/home/tibbo/.wine/drive_c/Program Files/Tibbo/TIDE/Bin/tmake.exe';
     const project = job.input.project;
     const files = job.input.files;
@@ -172,29 +331,25 @@ async function buildTide(job) {
     let pdbPath = '';
     let projectPath = '';
     const options = '';
-    let puuid = Math.random().toString(36).substring(2, 15)
-        + Math.random().toString(36).substring(2, 15);
-    if (project && project.id && project.id !== 'newtemp') {
-        puuid = project.id;
-    }
 
     if (!fs.existsSync(TIDEProjectsDIR)) {
         fs.mkdirSync(TIDEProjectsDIR);
     }
-    if (!fs.existsSync(path.join(TIDEProjectsDIR, 'temp'))) {
-        fs.mkdirSync(path.join(TIDEProjectsDIR, 'temp'));
+    if (!fs.existsSync(tempPath)) {
+        fs.mkdirSync(tempPath);
     }
-    projectPath = path.join(TIDEProjectsDIR, 'temp', puuid);
 
+    projectPath = path.join(tempPath, puuid);
+
+    // Add 'projectPath' to dictionary 'jobs' for the current 'job.id'
+    jobs[job.id].projectPath = projectPath;
 
     // check project folder
-
     if (!fs.existsSync(projectPath)) {
         fs.mkdirSync(projectPath);
     }
     pdbPath = path.join(projectPath, 'tmp', 'database.pdb');
 
-    const fileWrites = [];
     const tmpTPRPath = files.find(file => file.name === 'project.tpr');
     for (let i = 0; i < files.length; i += 1) {
         const file = files[i];
@@ -320,13 +475,15 @@ async function buildTide(job) {
 
     try {
         console.log(ccmd);
-        const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: 60000, shell: true });
+        const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: BUILDTIDE_SPAWN_TIMEOUT, shell: true });
         if (!exec.pid) {
             return 'error';
         }
         pid = exec.pid.toString();
         job.pid = pid;
         job.process = exec;
+        jobs[job.id].pid = pid;
+
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
                 reject();
@@ -350,29 +507,36 @@ async function buildTide(job) {
         });
         return result;
     } catch (ex) {
+        console.log(`job for ${projectPath} failed`);
+        console.log(`'ex: ${ex}`);
+
         return {
             status: 'failed',
             output: compileOutput,
         };
+    } finally {
+        if (jobs && job && job.id) {
+            killAllPids(jobs[job.id]);
+        }
     }
 }
 
-async function buildZephyr(job) {
+
+const BUILDZEPHYR_SPAWN_TIMEOUT = 60000;
+async function buildZephyr(job, puuid, fileWrites) {
     const project = job.input.project;
     const files = job.input.files;
-    const fileWrites = [];
     let tpcPath = '';
     let pdbPath = '';
     let projectPath = '';
     let shortPath = '';
     let ccmd = '';
-    let puuid = Math.random().toString(36).substring(2, 15)
-        + Math.random().toString(36).substring(2, 15);
-    if (project && project.id && project.id !== 'newtemp') {
-        puuid = project.id;
-    }
 
-    projectPath = path.join(TIDEProjectsDIR, 'temp', puuid);
+    projectPath = path.join(tempPath, puuid);
+
+    // Add 'projectPath' to dictionary 'jobs' for the current 'job.id'
+    jobs[job.id].projectPath = projectPath;
+
     for (let i = 0; i < files.length; i += 1) {
         const file = files[i];
         const filePath = path.join(projectPath, file.name);
@@ -458,13 +622,15 @@ async function buildZephyr(job) {
     });
 
     try {
-        const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: 60000, shell: true });
+        const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: BUILDZEPHYR_SPAWN_TIMEOUT, shell: true });
         if (!exec.pid) {
             return 'error';
         }
         pid = exec.pid.toString();
         job.pid = pid;
         job.process = exec;
+        jobs[job.id].pid = pid;
+
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
                 reject(error);
@@ -476,7 +642,7 @@ async function buildZephyr(job) {
                 if (exitCode !== 0 && !fs.existsSync(tpcPath)) {
                     return reject(exec.exitCode);
                 }
-                console.log('job for ' + projectPath + ' completed');
+                console.log(`job for ${projectPath} completed`);
                 let hex;
                 if (fs.existsSync(path.join(projectPath, 'build', 'zephyr', 'zephyr.hex'))) {
                     hex = fs.readFileSync(path.join(projectPath, 'build', 'zephyr', 'zephyr.hex'));
@@ -490,16 +656,24 @@ async function buildZephyr(job) {
                     output: compileOutput,
                 });
             });
+
+            // Preserve existing streams for logs or redirection
             exec.stdout.pipe(dStream);
             exec.stderr.pipe(dStream);
         });
+
         return result;
     } catch (ex) {
-        console.log('job for ' + projectPath + ' failed');
-        console.log(ex);
+        console.log(`job for ${projectPath} failed`);
+        console.log(`'ex: ${ex}`);
+
         return {
             status: 'failed',
             output: compileOutput,
         };
+    } finally {
+        if (jobs && job && job.id) {
+            killAllPids(jobs[job.id]);
+        }
     }
 }
