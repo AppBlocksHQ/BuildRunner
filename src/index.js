@@ -524,7 +524,6 @@ async function buildTide(job, puuid, fileWrites) {
 
 const BUILDZEPHYR_SPAWN_TIMEOUT = 60000;
 async function buildZephyr(job, puuid, fileWrites) {
-    console.log('Building Zephyr');
     const project = job.input.project;
     const files = job.input.files;
     let tpcPath = '';
@@ -580,15 +579,26 @@ async function buildZephyr(job, puuid, fileWrites) {
         zephyrProjectPath = path.join(zephyrProjectPath, '..');
     }
     await fs.outputFile(path.join(projectPath, 'files.json'), JSON.stringify(files));
-    ccmd = `cd ${process.env.PROJECTS_DIR}/temp && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build`;;
-    if (fs.existsSync(path.join(__dirname, '..', 'zephyrBuild.sh'))) {
-        ccmd = `./zephyrBuild.sh ${shortPath} ${project.zephyrName}`;
+    const cmdArgs = [];
+    if (process.platform === 'win32') {
+        ccmd = 'cmd.exe';
+        cmdArgs.push('/c');
+        cmdArgs.push(`"${path.join(zephyrProjectPath, '.venv', 'Scripts', 'activate.bat')} && cd ${process.env.PROJECTS_DIR}/temp && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build"`);
+    } else {
+        ccmd = 'sh';
+        cmdArgs.push('-c');
+        cmdArgs.push(`
+#!/bin/bash
+west build -h
+status=$?
+if [ $status -ne 0 ]; then
+  source ${zephyrProjectPath}/.venv/bin/activate
+fi
+cd ${projectPath}
+west build -b ${project.zephyrName} ./ --build-dir ./build
+        `);
     }
-    // Windows
-    if (fs.existsSync(path.join(__dirname, '..', 'zephyrBuild.bat'))) {
-        ccmd = `cmd /c "zephyrBuild.bat ${shortPath} ${project.zephyrName}"`;
-    }
-    console.log(ccmd);
+    console.log(ccmd, ...cmdArgs);
 
     if (fs.existsSync(tpcPath)) {
         fs.unlinkSync(tpcPath);
@@ -627,7 +637,7 @@ async function buildZephyr(job, puuid, fileWrites) {
     });
 
     try {
-        const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: BUILDZEPHYR_SPAWN_TIMEOUT, shell: true });
+        const exec = cp.spawn(ccmd, cmdArgs, { env: { ...process.env, NODE_OPTIONS: '' }, timeout: BUILDZEPHYR_SPAWN_TIMEOUT, shell: true });
         if (!exec.pid) {
             return 'error';
         }

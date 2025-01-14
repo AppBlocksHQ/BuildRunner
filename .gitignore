@@ -28,7 +28,5 @@ yarn.lock
 TIDEProjects
 config.json
 
-zephyrBuild.sh
-zephyrBuild.bat
 run_BuildRunner.sh
 stop_BuildRunner.sh
