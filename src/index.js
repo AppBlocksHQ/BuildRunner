@@ -580,10 +580,13 @@ async function buildZephyr(job, puuid, fileWrites) {
         zephyrProjectPath = path.join(zephyrProjectPath, '..');
     }
     await fs.outputFile(path.join(projectPath, 'files.json'), JSON.stringify(files));
-    const cmdInContainer = `cd ${process.env.PROJECTS_DIR}/temp && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build`;
-    ccmd = cmdInContainer;
+    ccmd = `cd ${process.env.PROJECTS_DIR}/temp && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build`;;
     if (fs.existsSync(path.join(__dirname, '..', 'zephyrBuild.sh'))) {
         ccmd = `./zephyrBuild.sh ${shortPath} ${project.zephyrName}`;
+    }
+    // Windows
+    if (fs.existsSync(path.join(__dirname, '..', 'zephyrBuild.bat'))) {
+        ccmd = `cmd /c "zephyrBuild.bat ${shortPath} ${project.zephyrName}"`;
     }
     console.log(ccmd);
 
@@ -624,38 +627,10 @@ async function buildZephyr(job, puuid, fileWrites) {
     });
 
     try {
-        const buildExec = cp.spawn('west build -h', [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: 60000, shell: true });
-        if (!buildExec.pid) {
-            return 'error';
-        }
-        const testBuildResult = await new Promise((resolve, reject) => {
-            buildExec.on('error', (error) => {
-                console.log(error);
-                reject();
-            });
-            buildExec.on('exit', () => {
-                const exitCode = buildExec.exitCode;
-                if (exitCode !== 0) {
-                    resolve(false);
-                }
-                resolve(true);
-            });
-        });
-        let exec;
-        if (testBuildResult) {
-            console.log('Build test passed');
-            exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: BUILDZEPHYR_SPAWN_TIMEOUT, shell: true });
-        } else {
-            console.log('Build test failed');
-            const venvActivate = path.join(process.env.ZEPHYR_BASE, '..', '.venv', 'Scripts', 'activate.bat');
-            exec = cp.spawn('cmd.exe', ['/c', `"${venvActivate} && ${ccmd}"`], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: 300000, shell: true });
-        }
-
-        console.log(exec);
+        const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: BUILDZEPHYR_SPAWN_TIMEOUT, shell: true });
         if (!exec.pid) {
             return 'error';
         }
-        console.log('hello');
         pid = exec.pid.toString();
         job.pid = pid;
         job.process = exec;
@@ -667,7 +642,6 @@ async function buildZephyr(job, puuid, fileWrites) {
                 reject(error);
             });
             exec.on('exit', () => {
-                console.log('exit');
                 // const compileData = globalThis.compileData.get(pid);
                 job.result.output = compileOutput;
                 const exitCode = exec.exitCode;
