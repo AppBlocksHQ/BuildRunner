@@ -45,7 +45,7 @@ function killAllPids(job) {
     } catch (err) {
         // An error occurs if 'childPid' does not
         console.error(`(IGNORE) Error killing parentPid: ${parentPid}`);
-        console.log(`Reason: parentPid ${parentPid} already terminated!`);
+        // console.log(`Reason: parentPid ${parentPid} already terminated!`);
 
         // Do NOT return, but continue to check whether there are
         //  any childPids alive which need to be killed.
@@ -61,7 +61,7 @@ function killAllPids(job) {
         } catch (err) {
             // An error occurs if 'childPid' does not exist or is already terminated
             console.error(`(IGNORE) Error killing childPid: ${childPid}`);
-            console.log(`Reason: childPid ${childPid} already terminated!`);
+            // console.log(`Reason: childPid ${childPid} already terminated!`);
         }
     });
 }
