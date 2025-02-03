@@ -269,7 +269,7 @@ try {
                             killAllPids(jobs[job.id]);
                         }
                         // Section: result, output, progress
-                        if (job.result && (job.result.output || job.progress)) {
+                        if (job.status !== 'completed' && job.result && (job.result.output || job.progress)) {
                             socket.emit('job', {
                                 ...job,
                                 result: {
