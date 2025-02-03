@@ -475,7 +475,6 @@ async function buildTide(job, puuid, fileWrites) {
             compileOutput = ''.concat(compileOutput, output);
             job.result.output = compileOutput;
             logStream.write(output);
-            console.log(output);
             next();
         },
     });
