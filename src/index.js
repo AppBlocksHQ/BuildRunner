@@ -44,7 +44,7 @@ function killAllPids(job) {
         process.kill(parentPid);
     } catch (err) {
         // An error occurs if 'childPid' does not
-        console.error(`(IGNORE) Error killing parentPid: ${parentPid}`);
+        // console.error(`(IGNORE) Error killing parentPid: ${parentPid}`);
         // console.log(`Reason: parentPid ${parentPid} already terminated!`);
 
         // Do NOT return, but continue to check whether there are
@@ -60,7 +60,7 @@ function killAllPids(job) {
             process.kill(childPid);
         } catch (err) {
             // An error occurs if 'childPid' does not exist or is already terminated
-            console.error(`(IGNORE) Error killing childPid: ${childPid}`);
+            // console.error(`(IGNORE) Error killing childPid: ${childPid}`);
             // console.log(`Reason: childPid ${childPid} already terminated!`);
         }
     });
@@ -463,12 +463,19 @@ async function buildTide(job, puuid, fileWrites) {
     job.result = {
         output: '',
     };
+    const buildDir = path.join(projectPath, 'build');
+    if (!fs.existsSync(buildDir)) {
+        fs.mkdirSync(buildDir, { recursive: true });
+    }
+    const logFilePath = path.join(buildDir, 'build.log');
+    const logStream = fs.createWriteStream(logFilePath, { flags: 'w' });
     const dStream = new stream.Writable({
         write: (chunk, encoding, next) => {
             const output = Buffer.concat([chunk]).toString('utf8');
             compileOutput = ''.concat(compileOutput, output);
             job.result.output = compileOutput;
-            // console.log(output);
+            logStream.write(output);
+            console.log(output);
             next();
         },
     });
@@ -515,6 +522,7 @@ async function buildTide(job, puuid, fileWrites) {
             output: compileOutput,
         };
     } finally {
+        logStream.end();
         if (jobs && job && job.id) {
             killAllPids(jobs[job.id]);
         }
@@ -522,7 +530,7 @@ async function buildTide(job, puuid, fileWrites) {
 }
 
 
-const BUILDZEPHYR_SPAWN_TIMEOUT = 60000;
+const BUILDZEPHYR_SPAWN_TIMEOUT = 600000;
 async function buildZephyr(job, puuid, fileWrites) {
     const project = job.input.project;
     const files = job.input.files;
@@ -579,11 +587,23 @@ async function buildZephyr(job, puuid, fileWrites) {
         zephyrProjectPath = path.join(zephyrProjectPath, '..');
     }
     await fs.outputFile(path.join(projectPath, 'files.json'), JSON.stringify(files));
-    ccmd = `docker run --rm -v ${zephyrProjectPath}:/workdir -v ${projectPath}:/workdir/${shortPath} ghcr.io/zephyrproject-rtos/ci:latest /bin/bash -c "cd /workdir && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build"`;
-    if (fs.existsSync(path.join(__dirname, '..', 'zephyrBuild.sh'))) {
-        ccmd = `./zephyrBuild.sh ${shortPath} ${project.zephyrName}`;
+    const cmdArgs = [];
+    if (process.platform === 'win32') {
+        ccmd = 'cmd.exe';
+        cmdArgs.push('/c');
+        cmdArgs.push(`"${path.join(zephyrProjectPath, '.venv', 'Scripts', 'activate.bat')} && cd ${process.env.PROJECTS_DIR}/temp && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build"`);
+    } else {
+        ccmd = 'bash';
+        cmdArgs.push('-c');
+        cmdArgs.push(`
+if ! command -v west &> /dev/null; then
+  source ${zephyrProjectPath}/.venv/bin/activate
+fi
+cd ${projectPath}
+west build -b ${project.zephyrName} ./ --build-dir ./build
+        `);
     }
-    console.log(ccmd);
+    console.log(ccmd, ...cmdArgs);
 
     if (fs.existsSync(tpcPath)) {
         fs.unlinkSync(tpcPath);
@@ -595,6 +615,12 @@ async function buildZephyr(job, puuid, fileWrites) {
     job.result = {
         output: '',
     };
+    const buildDir = path.join(projectPath, 'build');
+    if (!fs.existsSync(buildDir)) {
+        fs.mkdirSync(buildDir, { recursive: true });
+    }
+    const logFilePath = path.join(buildDir, 'build.log');
+    const logStream = fs.createWriteStream(logFilePath, { flags: 'w' });
     const dStream = new stream.Writable({
         write: (chunk, encoding, next) => {
             const output = Buffer.concat([chunk]).toString('utf8');
@@ -617,12 +643,19 @@ async function buildZephyr(job, puuid, fileWrites) {
                 //     job.result.output = compileOutput;
                 // }
             }
+            logStream.write(output);
             next();
         },
     });
 
     try {
-        const exec = cp.spawn(ccmd, [], { env: { ...process.env, NODE_OPTIONS: '' }, timeout: BUILDZEPHYR_SPAWN_TIMEOUT, shell: true });
+        const exec = cp.spawn(ccmd, cmdArgs,
+            {
+                env: { ...process.env, NODE_OPTIONS: '' },
+                timeout: BUILDZEPHYR_SPAWN_TIMEOUT,
+                shell: false,
+                windowsVerbatimArguments: true,
+            });
         if (!exec.pid) {
             return 'error';
         }
@@ -633,6 +666,7 @@ async function buildZephyr(job, puuid, fileWrites) {
 
         const result = await new Promise((resolve, reject) => {
             exec.on('error', (error) => {
+                console.log(error);
                 reject(error);
             });
             exec.on('exit', () => {
@@ -672,6 +706,7 @@ async function buildZephyr(job, puuid, fileWrites) {
             output: compileOutput,
         };
     } finally {
+        logStream.end();
         if (jobs && job && job.id) {
             killAllPids(jobs[job.id]);
         }
