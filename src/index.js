@@ -95,8 +95,8 @@ const UNDERSCORE_CRON_DOT_CHK = '_cron.chk';
 
 // INLINE FUNCTIONS
 // cron-schedule
-const CRON_INTERVAL_MINUTES = 60000;
-cron.schedule(`*/${CRON_INTERVAL_MINUTES} * * * *`, () => {
+const CRON_INTERVAL_MINUTES = 30;
+cron.schedule(`* * * * *`, () => {
     const items = fs.readdirSync(tempPath);
     const currentTime = new Date();
 
@@ -119,10 +119,10 @@ cron.schedule(`*/${CRON_INTERVAL_MINUTES} * * * *`, () => {
         // Get file stats and calculate elapsed time
         const stats = fs.statSync(projectCronChkFpath);
         const mtime = new Date(stats.mtime);
-        const elapsed = (currentTime.getTime() - mtime.getTime()) / 1000;
+        const elapsed = (currentTime.getTime() - mtime.getTime());
 
         // Remove the folder if it exceeds the CRON interval and is not '.gitkeep'
-        if (elapsed > (CRON_INTERVAL_MINUTES * 60) && item !== '.gitkeep') {
+        if (elapsed > (CRON_INTERVAL_MINUTES * 60 * 1000) && item !== '.gitkeep') {
             rimraf.sync(projectPath);
             console.log(`Removed folder older than ${CRON_INTERVAL_MINUTES}-min: ${projectPath}`);
         }
