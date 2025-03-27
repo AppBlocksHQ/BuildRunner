@@ -365,10 +365,8 @@ async function buildTide(job, puuid, fileWrites) {
             tprPath = filePath;
             const tpr = ini.parse(file.contents);
             tpcPath = path.join(path.dirname(tprPath), tpr.project.output);
-            if (debug === 'off') {
-                tpr.project.debug = 'off';
-                file.contents = ini.encode(tpr);
-            }
+            tpr.project.debug = debug === 'off' ? 'off' : 'on';
+            file.contents = ini.encode(tpr);
         }
         try {
             if (typeof file.contents === 'string') {
