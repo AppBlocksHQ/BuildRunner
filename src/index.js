@@ -494,14 +494,14 @@ async function buildTide(job, puuid, fileWrites) {
             });
             exec.on('exit', () => {
                 // const compileData = globalThis.compileData.get(pid);
-                if (!fs.existsSync(tpcPath)) {
+                if (!fs.existsSync(tpcPath) || !fs.existsSync(pdbPath)) {
                     return reject();
                 }
                 job.result.output = compileOutput;
                 resolve({
                     files: {
                         binary: fs.readFileSync(tpcPath),
-                        symbols: fs.readFileSync(path.join(projectPath, 'tmp', 'database.pdb')),
+                        symbols: fs.readFileSync(pdbPath),
                     },
                     output: compileOutput,
                 });
