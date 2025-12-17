@@ -588,7 +588,7 @@ async function buildZephyr(job, puuid, fileWrites) {
     if (process.platform === 'win32') {
         ccmd = 'cmd.exe';
         cmdArgs.push('/c');
-        cmdArgs.push(`"${path.join(zephyrProjectPath, '.venv', 'Scripts', 'activate.bat')} && cd ${process.env.PROJECTS_DIR}/temp && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build"`);
+        cmdArgs.push(`"${path.join(zephyrProjectPath, '.venv', 'Scripts', 'activate.bat')} && cd ${process.env.PROJECTS_DIR}/temp && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build  -- -DBOARD_ROOT=./"`);
     } else {
         ccmd = 'bash';
         cmdArgs.push('-c');
@@ -597,7 +597,7 @@ if ! command -v west &> /dev/null; then
   source ${zephyrProjectPath}/.venv/bin/activate
 fi
 cd ${projectPath}
-west build -b ${project.zephyrName} ./ --build-dir ./build
+west build -b ${project.zephyrName} ./ --build-dir ./build -- -DBOARD_ROOT=./
         `);
     }
     console.log(ccmd, ...cmdArgs);
