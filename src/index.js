@@ -592,12 +592,16 @@ async function buildZephyr(job, puuid, fileWrites) {
     } else {
         ccmd = 'bash';
         cmdArgs.push('-c');
+        let appFolder = './';
+        if (fs.existsSync(path.join(projectPath, 'app'))) {
+            appFolder = './app';
+        }
         cmdArgs.push(`
 if ! command -v west &> /dev/null; then
   source ${zephyrProjectPath}/.venv/bin/activate
 fi
 cd ${projectPath}
-west build -b ${project.zephyrName} ./ --build-dir ./build -- -DBOARD_ROOT=./
+west build -b ${project.zephyrName} ${appFolder} --build-dir ./build
         `);
     }
     console.log(ccmd, ...cmdArgs);
