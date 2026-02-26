@@ -30,3 +30,4 @@ config.json
 
 run_BuildRunner.sh
 stop_BuildRunner.sh
+.DS_Store
