@@ -574,14 +574,29 @@ async function buildZephyr(job, puuid, fileWrites) {
     pdbPath = path.join(projectPath, 'build', 'zephyr', 'zephyr.elf');
     shortPath = puuid;
     let zephyrProjectPath = process.env.ZEPHYR_BASE;
+    let zephyrSDKPath = process.env.ZEPHYR_SDK_INSTALL_DIR;
     if (project.zephyrToolchain === 'nrf') {
         if (process.env.ZEPHYR_BASE_NRF) {
             zephyrProjectPath = process.env.ZEPHYR_BASE_NRF;
         }
     }
+    // read app/CMakeLists.txt
+    const appCMakeListsPath = path.join(projectPath, 'app', 'CMakeLists.txt');
+    if (fs.existsSync(appCMakeListsPath)) {
+        const appCMakeLists = fs.readFileSync(appCMakeListsPath, 'utf-8');
+        const appCMakeListsLines = appCMakeLists.split('\n');
+        for (let i = 0; i < appCMakeListsLines.length; i += 1) {
+            const line = appCMakeListsLines[i];
+            if (line.indexOf('find_package(Zephyr 4.2.99') >= 0) {
+                zephyrProjectPath = process.env.ZEPHYR_BASE_43;
+                zephyrSDKPath = process.env.ZEPHYR_SDK_INSTALL_DIR_43;
+            }
+        }
+    }
     const dirItems = fs.readdirSync(zephyrProjectPath);
+    let zephyrPYENVPath = zephyrProjectPath;
     if (!dirItems.includes('zephyr')) {
-        zephyrProjectPath = path.join(zephyrProjectPath, '..');
+        zephyrPYENVPath = path.join(zephyrPYENVPath, '..');
     }
     await fs.outputFile(path.join(projectPath, 'files.json'), JSON.stringify(files));
     const cmdArgs = [];
@@ -597,10 +612,10 @@ async function buildZephyr(job, puuid, fileWrites) {
             appFolder = './app';
         }
         cmdArgs.push(`
-if ! command -v west &> /dev/null; then
-  source ${zephyrProjectPath}/.venv/bin/activate
-fi
+source ${zephyrPYENVPath}/.venv/bin/activate
 cd ${projectPath}
+${zephyrProjectPath !== '' ? `export ZEPHYR_BASE=${zephyrProjectPath}` : ''}
+${zephyrSDKPath !== '' ? `export ZEPHYR_SDK_INSTALL_DIR=${zephyrSDKPath}` : ''}
 west build -b ${project.zephyrName} ${appFolder} --build-dir ./build
         `);
     }
