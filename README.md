@@ -35,3 +35,8 @@ name-blocklist: []
 ```
 west update
 ```
+
+# disable sysbuild in zephyr directory
+```
+west config --global build.sysbuild False
+```
