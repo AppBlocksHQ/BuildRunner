@@ -582,6 +582,10 @@ async function buildZephyr(job, puuid, fileWrites) {
         const appCMakeListsLines = appCMakeLists.split('\n');
         for (let i = 0; i < appCMakeListsLines.length; i += 1) {
             const line = appCMakeListsLines[i];
+            if (line.indexOf('find_package(Zephyr 4.2.99') >= 0) {
+                zephyrProjectPath = process.env.ZEPHYR_BASE_42;
+                zephyrSDKPath = process.env.ZEPHYR_SDK_INSTALL_DIR_42;
+            }
             if (line.indexOf('find_package(Zephyr 4.3.0') >= 0) {
                 zephyrProjectPath = process.env.ZEPHYR_BASE_43;
                 zephyrSDKPath = process.env.ZEPHYR_SDK_INSTALL_DIR_43;
