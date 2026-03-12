@@ -498,6 +498,9 @@ async function buildTide(job, puuid, fileWrites) {
                     return reject();
                 }
                 job.result.output = compileOutput;
+                if (job.result.output.indexOf('Compiled binary file is too large to fit on currently selected target') >= 0) {
+                    return reject('Compiled binary file is too large to fit on currently selected target');
+                }
                 resolve({
                     files: {
                         binary: fs.readFileSync(tpcPath),
