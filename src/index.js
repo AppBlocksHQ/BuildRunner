@@ -536,6 +536,7 @@ async function buildZephyr(job, puuid, fileWrites) {
     const files = job.input.files;
     let tpcPath = '';
     let pdbPath = '';
+    let hexPath = '';
     let projectPath = '';
     let shortPath = '';
     let ccmd = '';
@@ -575,6 +576,7 @@ async function buildZephyr(job, puuid, fileWrites) {
 
     tpcPath = path.join(projectPath, 'build', 'zephyr', 'zephyr.bin');
     pdbPath = path.join(projectPath, 'build', 'zephyr', 'zephyr.elf');
+    hexPath = path.join(projectPath, 'build', 'zephyr', 'zephyr.hex');
     shortPath = puuid;
     let zephyrProjectPath = process.env.ZEPHYR_BASE;
     let zephyrSDKPath = process.env.ZEPHYR_SDK_INSTALL_DIR;
@@ -599,6 +601,9 @@ async function buildZephyr(job, puuid, fileWrites) {
         if (process.env.ZEPHYR_BASE_NRF) {
             zephyrProjectPath = process.env.ZEPHYR_BASE_NRF;
             zephyrSDKPath = process.env.ZEPHYR_SDK_INSTALL_DIR_NRF;
+            hexPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.hex');
+            tpcPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.bin');
+            pdbPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.elf');
         }
     }
     const dirItems = fs.readdirSync(zephyrProjectPath);
@@ -702,8 +707,8 @@ west build -b ${project.zephyrName} ${appFolder} --build-dir ./build
                 }
                 console.log(`job for ${projectPath} completed`);
                 let hex;
-                if (fs.existsSync(path.join(projectPath, 'build', 'zephyr', 'zephyr.hex'))) {
-                    hex = fs.readFileSync(path.join(projectPath, 'build', 'zephyr', 'zephyr.hex'));
+                if (fs.existsSync(hexPath)) {
+                    hex = fs.readFileSync(hexPath);
                 }
                 resolve({
                     files: {
