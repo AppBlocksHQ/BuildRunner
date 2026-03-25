@@ -704,6 +704,9 @@ west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${project.z
                     hexPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.hex');
                     tpcPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.bin');
                     pdbPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.elf');
+                    if (fs.existsSync(path.join(projectPath, 'build', 'merged.hex'))) {
+                        hexPath = path.join(projectPath, 'build', 'merged.hex');
+                    }
                 }
                 if (exitCode !== 0 && !fs.existsSync(tpcPath)) {
                     return reject(exec.exitCode);
