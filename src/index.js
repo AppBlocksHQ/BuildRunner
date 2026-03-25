@@ -708,7 +708,7 @@ west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${project.z
                         hexPath = path.join(projectPath, 'build', 'merged.hex');
                     }
                 }
-                if (exitCode !== 0 && !fs.existsSync(tpcPath)) {
+                if (exitCode !== 0 || !fs.existsSync(tpcPath)) {
                     return reject(exec.exitCode);
                 }
                 console.log(`job for ${projectPath} completed`);
