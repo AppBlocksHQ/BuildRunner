@@ -601,9 +601,6 @@ async function buildZephyr(job, puuid, fileWrites) {
         if (process.env.ZEPHYR_BASE_NRF) {
             zephyrProjectPath = process.env.ZEPHYR_BASE_NRF;
             zephyrSDKPath = process.env.ZEPHYR_SDK_INSTALL_DIR_NRF;
-            hexPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.hex');
-            tpcPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.bin');
-            pdbPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.elf');
         }
     }
     const dirItems = fs.readdirSync(zephyrProjectPath);
@@ -625,11 +622,12 @@ async function buildZephyr(job, puuid, fileWrites) {
             appFolder = './app';
         }
         cmdArgs.push(`
-source ${zephyrPYENVPath}/.venv/bin/activate
+
 cd ${projectPath}
 ${zephyrProjectPath !== '' ? `export ZEPHYR_BASE=${zephyrProjectPath}` : ''}
 ${zephyrSDKPath !== '' ? `export ZEPHYR_SDK_INSTALL_DIR=${zephyrSDKPath}` : ''}
-west build -b ${project.zephyrName} ${appFolder} --build-dir ./build
+source ${zephyrPYENVPath}/.venv/bin/activate
+west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${project.zephyrToolchain === 'nrf' ? '--sysbuild' : '--no-sysbuild'}
         `);
     }
     console.log(ccmd, ...cmdArgs);
@@ -702,6 +700,11 @@ west build -b ${project.zephyrName} ${appFolder} --build-dir ./build
                 // const compileData = globalThis.compileData.get(pid);
                 job.result.output = compileOutput;
                 const exitCode = exec.exitCode;
+                if (!fs.existsSync(tpcPath)) {
+                    hexPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.hex');
+                    tpcPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.bin');
+                    pdbPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.elf');
+                }
                 if (exitCode !== 0 && !fs.existsSync(tpcPath)) {
                     return reject(exec.exitCode);
                 }
