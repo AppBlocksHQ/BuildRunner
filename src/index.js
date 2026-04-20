@@ -716,12 +716,32 @@ west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${project.z
                 if (fs.existsSync(hexPath)) {
                     hex = fs.readFileSync(hexPath);
                 }
+                let flashAddress;
+                const configCandidates = [
+                    path.join(projectPath, 'build', 'zephyr', '.config'),
+                    path.join(projectPath, 'build', 'app', 'zephyr', '.config'),
+                ];
+                for (let i = 0; i < configCandidates.length; i += 1) {
+                    if (fs.existsSync(configCandidates[i])) {
+                        const configContents = fs.readFileSync(configCandidates[i], 'utf8');
+                        const baseMatch = configContents.match(/^CONFIG_FLASH_BASE_ADDRESS=(\S+)/m);
+                        const offsetMatch = configContents.match(/^CONFIG_FLASH_LOAD_OFFSET=(\S+)/m);
+                        if (baseMatch) {
+                            const parseNum = s => (s.startsWith('0x') ? parseInt(s, 16) : Number(s));
+                            const base = parseNum(baseMatch[1]);
+                            const offset = offsetMatch ? parseNum(offsetMatch[1]) : 0;
+                            flashAddress = base + offset;
+                        }
+                        break;
+                    }
+                }
                 resolve({
                     files: {
                         binary: fs.readFileSync(tpcPath),
                         symbols: fs.readFileSync(pdbPath),
                         hex,
                     },
+                    flashAddress,
                     output: compileOutput,
                 });
             });
