@@ -735,11 +735,23 @@ west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${project.z
                         break;
                     }
                 }
+                let uf2;
+                const uf2Candidates = [
+                    path.join(projectPath, 'build', 'zephyr', 'zephyr.uf2'),
+                    path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.uf2'),
+                ];
+                for (let i = 0; i < uf2Candidates.length; i += 1) {
+                    if (fs.existsSync(uf2Candidates[i])) {
+                        uf2 = fs.readFileSync(uf2Candidates[i]);
+                        break;
+                    }
+                }
                 resolve({
                     files: {
                         binary: fs.readFileSync(tpcPath),
                         symbols: fs.readFileSync(pdbPath),
                         hex,
+                        uf2,
                     },
                     flashAddress,
                     output: compileOutput,
