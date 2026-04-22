@@ -159,6 +159,52 @@ const addProjectCronChkToFilesWrites = (job) => {
     return { fileWrites, puuid };
 };
 
+// Parse the per-runner `args:` section of a Zephyr `runners.yaml` file.
+// Returns a plain object mapping runner name -> array of argument strings.
+const parseRunnersYamlArgs = (yamlContent) => {
+    const result = {};
+    const lines = yamlContent.split('\n');
+    let inArgs = false;
+    let currentRunner = null;
+
+    const stripQuotes = (s) => {
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+            return s.slice(1, -1);
+        }
+        return s;
+    };
+
+    for (let i = 0; i < lines.length; i += 1) {
+        const raw = lines[i];
+        if (/^\s*#/.test(raw) || /^\s*$/.test(raw)) {
+            continue;
+        }
+        if (!inArgs) {
+            if (/^args:\s*$/.test(raw)) {
+                inArgs = true;
+            }
+            continue;
+        }
+        // A new top-level key (no leading whitespace) ends the args block.
+        if (/^\S/.test(raw)) {
+            inArgs = false;
+            currentRunner = null;
+            continue;
+        }
+        const runnerMatch = raw.match(/^ {2}([^\s:]+):\s*(\[\s*\])?\s*$/);
+        if (runnerMatch) {
+            currentRunner = runnerMatch[1];
+            result[currentRunner] = [];
+            continue;
+        }
+        const argMatch = raw.match(/^ {4}-\s*(.*)$/);
+        if (argMatch && currentRunner) {
+            result[currentRunner].push(stripQuotes(argMatch[1].trimEnd()));
+        }
+    }
+    return result;
+};
+
 // Get childPids
 const getChildPids = async (job) => {
     try {
@@ -746,6 +792,19 @@ west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${project.z
                         break;
                     }
                 }
+                let runnerArgs;
+                const runnersYamlCandidates = [
+                    path.join(projectPath, 'build', 'zephyr', 'runners.yaml'),
+                    path.join(projectPath, 'build', 'app', 'zephyr', 'runners.yaml'),
+                ];
+                for (let i = 0; i < runnersYamlCandidates.length; i += 1) {
+                    if (fs.existsSync(runnersYamlCandidates[i])) {
+                        const yamlContents = fs.readFileSync(runnersYamlCandidates[i], 'utf8');
+                        runnerArgs = parseRunnersYamlArgs(yamlContents);
+                        console.log(runnerArgs);
+                        break;
+                    }
+                }
                 resolve({
                     files: {
                         binary: fs.readFileSync(tpcPath),
@@ -754,6 +813,7 @@ west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${project.z
                         uf2,
                     },
                     flashAddress,
+                    runnerArgs,
                     output: compileOutput,
                 });
             });
