@@ -188,6 +188,13 @@ const getChildPids = async (job) => {
 
 
 const jobs = {};
+
+function getTaskLoad() {
+    return {
+        activeJobs: Object.keys(jobs).length,
+    };
+}
+
 let servers = [];
 try {
     const configPath = path.join(__dirname, '..', 'config.json');
@@ -232,12 +239,22 @@ try {
                     key: server.key,
                     capabilities: jobTypes,
                     jobs: Object.keys(jobs),
+                    load: getTaskLoad(),
                 });
                 Object.keys(jobs).forEach((job) => {
                     socket.emit('job', job);
                     delete jobs[job.id];
                 });
             });
+
+            setInterval(() => {
+                if (socket.connected) {
+                    socket.emit('load', {
+                        key: server.key,
+                        ...getTaskLoad(),
+                    });
+                }
+            }, 5000);
 
             socket.on('update', (job) => {
                 if (job.status === 'cancelled') {
@@ -256,6 +273,7 @@ try {
                 try {
                     let result;
                     jobs[job.id] = job;
+                    socket.emit('load', { key: server.key, ...getTaskLoad() });
                     const outputInterval = setInterval(async () => {
                         // Section: childPids
                         if (jobs[job.id]) {
@@ -310,6 +328,7 @@ try {
                     if (socket.connected) {
                         socket.emit('job', job);
                         delete jobs[job.id];
+                        socket.emit('load', { key: server.key, ...getTaskLoad() });
                     }
                 }
             });
