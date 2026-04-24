@@ -651,6 +651,8 @@ cd ${projectPath}
 ${zephyrProjectPath !== '' ? `export ZEPHYR_BASE=${zephyrProjectPath}` : ''}
 ${zephyrSDKPath !== '' ? `export ZEPHYR_SDK_INSTALL_DIR=${zephyrSDKPath}` : ''}
 source ${zephyrPYENVPath}/.venv/bin/activate
+export CCACHE_BASEDIR=${projectPath}
+export CCACHE_NOHASHDIR=1
 west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${project.zephyrToolchain === 'nrf' ? '--sysbuild' : '--no-sysbuild'}
         `);
     }
