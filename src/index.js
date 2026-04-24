@@ -242,10 +242,14 @@ try {
                     jobs: Object.keys(jobs),
                     load: getTaskLoad(),
                 });
-                Object.keys(jobs).forEach((job) => {
-                    socket.emit('job', job);
-                    delete jobs[job.id];
+                Object.keys(jobs).forEach((jobId) => {
+                    const finishedJob = jobs[jobId];
+                    if (finishedJob.status === 'completed' || finishedJob.status === 'failed') {
+                        socket.emit('job', finishedJob);
+                        delete jobs[jobId];
+                    }
                 });
+                socket.emit('load', { key: server.key, ...getTaskLoad() });
             });
 
             setInterval(() => {
