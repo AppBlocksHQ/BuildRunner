@@ -215,6 +215,7 @@ try {
             const socketURL = `${server.url}/workers`;
             const socket = io(socketURL, {
                 path: '/workers',
+                pingTimeout: 60000,
             });
 
             socket.on('connect_error', (err) => {
