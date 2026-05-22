@@ -236,19 +236,20 @@ function buildConnectionStatusLines() {
     }
 
     const width = process.stdout.columns || 80;
-    const segments = urls.map((url) => {
+    const divider = `\x1b[2m${'─'.repeat(Math.min(width, 100))}\x1b[0m`;
+    const lines = [divider, ` \x1b[1mConnections\x1b[0m`];
+
+    urls.forEach((url) => {
         const { state, detail } = connectionStates[url];
         const label = formatEndpointLabel(url);
-        let segment = `${getStateSymbol(state)} ${label}: ${state}`;
+        let line = `   ${getStateSymbol(state)} ${label}: ${state}`;
         if (detail && state !== 'connected') {
-            segment += ` (${detail})`;
+            line += ` (${detail})`;
         }
-        return segment;
+        lines.push(line);
     });
 
-    const divider = `\x1b[2m${'─'.repeat(Math.min(width, 100))}\x1b[0m`;
-    const body = ` \x1b[1mConnections\x1b[0m  ${segments.join('  \x1b[2m│\x1b[0m  ')}`;
-    return [divider, body];
+    return lines;
 }
 
 function clearConnectionStatusBar() {
