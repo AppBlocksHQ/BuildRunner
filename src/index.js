@@ -8,6 +8,7 @@ const cp = require('child_process');
 const ini = require('ini');
 const dotenv = require('dotenv');
 const rimraf = require('rimraf');
+const readline = require('readline');
 
 const psTree = require('ps-tree');
 
@@ -96,7 +97,7 @@ const UNDERSCORE_CRON_DOT_CHK = '_cron.chk';
 // INLINE FUNCTIONS
 // cron-schedule
 const CRON_INTERVAL_MINUTES = 30;
-cron.schedule(`* * * * *`, () => {
+const tempCleanupCron = cron.schedule(`* * * * *`, () => {
     const items = fs.readdirSync(tempPath);
     const currentTime = new Date();
 
@@ -188,6 +189,204 @@ const getChildPids = async (job) => {
 
 
 const jobs = {};
+const sockets = [];
+const workerIntervals = [];
+let isShuttingDown = false;
+
+const connectionStates = {};
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+let statusBarLineCount = 0;
+let statusBarActive = false;
+let lastLoggedStatusContent = '';
+let spinnerFrame = 0;
+
+function isInteractiveTerminal() {
+    return process.stdout.isTTY && process.env.BUILDRUNNER_NO_STATUS_BAR !== '1';
+}
+
+function formatEndpointLabel(url) {
+    const base = url.replace(/\/workers$/, '');
+    try {
+        return new URL(base).host;
+    } catch (err) {
+        return base || url;
+    }
+}
+
+function getStateSymbol(state) {
+    switch (state) {
+        case 'connected':
+            return '\x1b[32m●\x1b[0m';
+        case 'connecting':
+        case 'reconnecting':
+            return `\x1b[33m${SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length]}\x1b[0m`;
+        case 'error':
+            return '\x1b[31m✗\x1b[0m';
+        case 'disconnected':
+            return '\x1b[90m○\x1b[0m';
+        default:
+            return '?';
+    }
+}
+
+function buildConnectionStatusLines() {
+    const urls = Object.keys(connectionStates);
+    if (urls.length === 0) {
+        return [];
+    }
+
+    const width = process.stdout.columns || 80;
+    const segments = urls.map((url) => {
+        const { state, detail } = connectionStates[url];
+        const label = formatEndpointLabel(url);
+        let segment = `${getStateSymbol(state)} ${label}: ${state}`;
+        if (detail && state !== 'connected') {
+            segment += ` (${detail})`;
+        }
+        return segment;
+    });
+
+    const divider = `\x1b[2m${'─'.repeat(Math.min(width, 100))}\x1b[0m`;
+    const body = ` \x1b[1mConnections\x1b[0m  ${segments.join('  \x1b[2m│\x1b[0m  ')}`;
+    return [divider, body];
+}
+
+function clearConnectionStatusBar() {
+    if (!statusBarActive || statusBarLineCount === 0) {
+        return;
+    }
+    readline.moveCursor(process.stdout, 0, -statusBarLineCount);
+    readline.clearScreenDown(process.stdout);
+    statusBarLineCount = 0;
+}
+
+function renderConnectionStatusBar(force = false) {
+    const lines = buildConnectionStatusLines();
+    if (lines.length === 0) {
+        return;
+    }
+
+    const content = lines.join('\n');
+    if (!isInteractiveTerminal()) {
+        if (!force && content === lastLoggedStatusContent) {
+            return;
+        }
+        lastLoggedStatusContent = content;
+        originalConsoleLog(content);
+        return;
+    }
+
+    clearConnectionStatusBar();
+    lines.forEach((line) => {
+        process.stdout.write(`${line}\n`);
+    });
+    statusBarLineCount = lines.length;
+    statusBarActive = true;
+}
+
+function setConnectionState(socketURL, state, detail) {
+    connectionStates[socketURL] = {
+        state,
+        detail: detail || null,
+        updatedAt: new Date().toISOString(),
+    };
+    renderConnectionStatusBar(true);
+}
+
+function printConnectionStates() {
+    renderConnectionStatusBar(true);
+}
+
+const originalConsoleLog = console.log.bind(console);
+const originalConsoleError = console.error.bind(console);
+
+function wrapConsoleOutput(originalFn) {
+    return (...args) => {
+        if (statusBarActive && isInteractiveTerminal()) {
+            clearConnectionStatusBar();
+        }
+        originalFn(...args);
+        if (statusBarActive && isInteractiveTerminal()) {
+            renderConnectionStatusBar(true);
+        }
+    };
+}
+
+console.log = wrapConsoleOutput(originalConsoleLog);
+console.error = wrapConsoleOutput(originalConsoleError);
+
+function hasPendingConnections() {
+    return Object.values(connectionStates).some(({ state }) => (
+        state === 'connecting' || state === 'reconnecting'
+    ));
+}
+
+function trackInterval(fn, ms) {
+    const intervalId = setInterval(fn, ms);
+    workerIntervals.push(intervalId);
+    return intervalId;
+}
+
+function shutdown(signal) {
+    if (isShuttingDown) {
+        process.exit(signal === 'SIGINT' ? 130 : 143);
+    }
+    isShuttingDown = true;
+
+    const exitCode = signal === 'SIGINT' ? 130 : 143;
+    try {
+        clearConnectionStatusBar();
+        if (isInteractiveTerminal()) {
+            process.stdout.write('\n');
+        }
+
+        Object.keys(jobs).forEach((jobId) => {
+            killAllPids(jobs[jobId]);
+        });
+
+        workerIntervals.forEach((intervalId) => clearInterval(intervalId));
+        workerIntervals.length = 0;
+
+        sockets.forEach((socket) => {
+            try {
+                if (socket.io) {
+                    socket.io.reconnection(false);
+                }
+                socket.removeAllListeners();
+                socket.disconnect();
+                socket.close();
+            } catch (err) {
+                // ignore cleanup errors during shutdown
+            }
+        });
+        sockets.length = 0;
+
+        if (tempCleanupCron) {
+            tempCleanupCron.stop();
+        }
+    } finally {
+        process.exit(exitCode);
+    }
+}
+
+function setupConnectionStatusBar() {
+    if (!isInteractiveTerminal()) {
+        return;
+    }
+
+    process.stdout.on('resize', () => renderConnectionStatusBar(true));
+
+    trackInterval(() => {
+        if (hasPendingConnections()) {
+            spinnerFrame += 1;
+            renderConnectionStatusBar(true);
+        }
+    }, 100);
+}
+
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.on('exit', () => clearConnectionStatusBar());
 
 function getTaskLoad() {
     return {
@@ -217,17 +416,24 @@ try {
                 path: '/workers',
                 pingTimeout: 60000,
             });
+            sockets.push(socket);
+
+            setConnectionState(socketURL, 'connecting');
 
             socket.on('connect_error', (err) => {
-                console.log(`connect_error to ${socketURL} due to ${err.message}`);
+                setConnectionState(socketURL, 'error', err.message);
             });
 
-            socket.on('disconnect', (reason, details) => {
-                console.log(`disconnected due to ${reason}, ${JSON.stringify(details)}`);
+            socket.on('disconnect', (reason) => {
+                setConnectionState(socketURL, 'disconnected', reason);
+            });
+
+            socket.on('reconnect_attempt', () => {
+                setConnectionState(socketURL, 'reconnecting');
             });
 
             socket.on('connect', () => {
-                console.log('Connected to Server');
+                setConnectionState(socketURL, 'connected');
                 const jobTypes = [];
                 if (process.env.PROJECTS_DIR || process.env.PATH_TMAKE) {
                     jobTypes.push('build:tios');
@@ -252,7 +458,7 @@ try {
                 socket.emit('load', { key: server.key, ...getTaskLoad() });
             });
 
-            setInterval(() => {
+            trackInterval(() => {
                 if (socket.connected) {
                     socket.emit('load', {
                         key: server.key,
@@ -338,6 +544,8 @@ try {
                 }
             });
         }
+        setupConnectionStatusBar();
+        trackInterval(printConnectionStates, 30000);
     }
 } catch (ex) {
     console.log('unable to read config.json');
