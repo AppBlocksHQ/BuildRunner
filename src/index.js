@@ -382,7 +382,7 @@ function setupConnectionStatusBar() {
             spinnerFrame += 1;
             renderConnectionStatusBar(true);
         }
-    }, 100);
+    }, 5000);
 }
 
 process.once('SIGINT', () => shutdown('SIGINT'));
