@@ -411,6 +411,20 @@ function getTaskLoad() {
     };
 }
 
+function getWorkerJobTypes() {
+    const jobTypes = [];
+    if (process.env.PROJECTS_DIR || process.env.PATH_TMAKE) {
+        jobTypes.push('build:tios');
+    }
+    if (process.env.ZEPHYR_BASE) {
+        jobTypes.push('build:zephyr');
+    }
+    return jobTypes;
+}
+
+const workerJobTypes = getWorkerJobTypes();
+let workerJobTypesLogged = false;
+
 let servers = [];
 try {
     const configPath = path.join(__dirname, '..', 'config.json');
@@ -457,17 +471,13 @@ try {
 
             socket.on('connect', () => {
                 setConnectionState(socketURL, 'connected');
-                const jobTypes = [];
-                if (process.env.PROJECTS_DIR || process.env.PATH_TMAKE) {
-                    jobTypes.push('build:tios');
+                if (!workerJobTypesLogged) {
+                    workerJobTypesLogged = true;
+                    console.log(`Worker job types: ${workerJobTypes.join(', ')}`);
                 }
-                if (process.env.ZEPHYR_BASE) {
-                    jobTypes.push('build:zephyr');
-                }
-                console.log(`Worker job types: ${jobTypes.join(', ')}`);
                 socket.emit('update', {
                     key: server.key,
-                    capabilities: jobTypes,
+                    capabilities: workerJobTypes,
                     jobs: Object.keys(jobs),
                     load: getTaskLoad(),
                 });
