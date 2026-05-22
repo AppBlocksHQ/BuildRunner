@@ -416,21 +416,35 @@ try {
             const socket = io(socketURL, {
                 path: '/workers',
                 pingTimeout: 60000,
+                reconnection: true,
+                reconnectionAttempts: Infinity,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 10000,
             });
             sockets.push(socket);
 
             setConnectionState(socketURL, 'connecting');
 
             socket.on('connect_error', (err) => {
-                setConnectionState(socketURL, 'error', err.message);
+                setConnectionState(socketURL, 'reconnecting', err.message);
             });
 
             socket.on('disconnect', (reason) => {
-                setConnectionState(socketURL, 'disconnected', reason);
+                if (isShuttingDown) {
+                    return;
+                }
+                setConnectionState(socketURL, 'reconnecting', reason);
+                if (reason === 'io server disconnect') {
+                    socket.connect();
+                }
             });
 
             socket.on('reconnect_attempt', () => {
                 setConnectionState(socketURL, 'reconnecting');
+            });
+
+            socket.on('reconnect_error', (err) => {
+                setConnectionState(socketURL, 'reconnecting', err.message);
             });
 
             socket.on('connect', () => {
