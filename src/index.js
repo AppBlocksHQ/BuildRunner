@@ -194,12 +194,11 @@ const workerIntervals = [];
 let isShuttingDown = false;
 
 const connectionStates = {};
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 let statusBarLineCount = 0;
 let statusBarActive = false;
 let lastLoggedStatusContent = '';
-let lastRenderedStatusContent = '';
-let statusRenderTimer = null;
-const STATUS_RENDER_INTERVAL_MS = 500;
+let spinnerFrame = 0;
 
 function isInteractiveTerminal() {
     return process.stdout.isTTY && process.env.BUILDRUNNER_NO_STATUS_BAR !== '1';
@@ -220,7 +219,7 @@ function getStateSymbol(state) {
             return '\x1b[32m●\x1b[0m';
         case 'connecting':
         case 'reconnecting':
-            return '\x1b[33m◌\x1b[0m';
+            return `\x1b[33m${SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length]}\x1b[0m`;
         case 'error':
             return '\x1b[31m✗\x1b[0m';
         case 'disconnected':
@@ -263,21 +262,12 @@ function clearConnectionStatusBar() {
 }
 
 function renderConnectionStatusBar(force = false) {
-    if (isShuttingDown) {
-        return;
-    }
-
     const lines = buildConnectionStatusLines();
     if (lines.length === 0) {
         return;
     }
 
     const content = lines.join('\n');
-    if (!force && content === lastRenderedStatusContent) {
-        return;
-    }
-    lastRenderedStatusContent = content;
-
     if (!isInteractiveTerminal()) {
         if (!force && content === lastLoggedStatusContent) {
             return;
@@ -295,28 +285,17 @@ function renderConnectionStatusBar(force = false) {
     statusBarActive = true;
 }
 
-function scheduleConnectionStatusRender() {
-    if (isShuttingDown || statusRenderTimer) {
-        return;
-    }
-    statusRenderTimer = setTimeout(() => {
-        statusRenderTimer = null;
-        renderConnectionStatusBar();
-    }, STATUS_RENDER_INTERVAL_MS);
-}
-
 function setConnectionState(socketURL, state, detail) {
-    const normalizedDetail = detail || null;
-    const prev = connectionStates[socketURL];
-    if (prev && prev.state === state && prev.detail === normalizedDetail) {
-        return;
-    }
     connectionStates[socketURL] = {
         state,
-        detail: normalizedDetail,
+        detail: detail || null,
         updatedAt: new Date().toISOString(),
     };
-    scheduleConnectionStatusRender();
+    renderConnectionStatusBar(true);
+}
+
+function printConnectionStates() {
+    renderConnectionStatusBar(true);
 }
 
 const originalConsoleLog = console.log.bind(console);
@@ -329,7 +308,6 @@ function wrapConsoleOutput(originalFn) {
         }
         originalFn(...args);
         if (statusBarActive && isInteractiveTerminal()) {
-            lastRenderedStatusContent = '';
             renderConnectionStatusBar(true);
         }
     };
@@ -337,6 +315,12 @@ function wrapConsoleOutput(originalFn) {
 
 console.log = wrapConsoleOutput(originalConsoleLog);
 console.error = wrapConsoleOutput(originalConsoleError);
+
+function hasPendingConnections() {
+    return Object.values(connectionStates).some(({ state }) => (
+        state === 'connecting' || state === 'reconnecting'
+    ));
+}
 
 function trackInterval(fn, ms) {
     const intervalId = setInterval(fn, ms);
@@ -352,10 +336,6 @@ function shutdown(signal) {
 
     const exitCode = signal === 'SIGINT' ? 130 : 143;
     try {
-        if (statusRenderTimer) {
-            clearTimeout(statusRenderTimer);
-            statusRenderTimer = null;
-        }
         clearConnectionStatusBar();
         if (isInteractiveTerminal()) {
             process.stdout.write('\n');
@@ -395,10 +375,14 @@ function setupConnectionStatusBar() {
         return;
     }
 
-    process.stdout.on('resize', () => {
-        lastRenderedStatusContent = '';
-        renderConnectionStatusBar(true);
-    });
+    process.stdout.on('resize', () => renderConnectionStatusBar(true));
+
+    trackInterval(() => {
+        if (hasPendingConnections()) {
+            spinnerFrame += 1;
+            renderConnectionStatusBar(true);
+        }
+    }, 5000);
 }
 
 process.once('SIGINT', () => shutdown('SIGINT'));
@@ -410,20 +394,6 @@ function getTaskLoad() {
         activeJobs: Object.keys(jobs).length,
     };
 }
-
-function getWorkerJobTypes() {
-    const jobTypes = [];
-    if (process.env.PROJECTS_DIR || process.env.PATH_TMAKE) {
-        jobTypes.push('build:tios');
-    }
-    if (process.env.ZEPHYR_BASE) {
-        jobTypes.push('build:zephyr');
-    }
-    return jobTypes;
-}
-
-const workerJobTypes = getWorkerJobTypes();
-let workerJobTypesLogged = false;
 
 let servers = [];
 try {
@@ -446,38 +416,36 @@ try {
             const socket = io(socketURL, {
                 path: '/workers',
                 pingTimeout: 60000,
-                reconnection: true,
-                reconnectionAttempts: Infinity,
-                reconnectionDelay: 1000,
-                reconnectionDelayMax: 10000,
             });
             sockets.push(socket);
 
             setConnectionState(socketURL, 'connecting');
 
             socket.on('connect_error', (err) => {
-                setConnectionState(socketURL, 'reconnecting', err.message);
+                setConnectionState(socketURL, 'error', err.message);
             });
 
             socket.on('disconnect', (reason) => {
-                if (isShuttingDown) {
-                    return;
-                }
-                setConnectionState(socketURL, 'reconnecting', reason);
-                if (reason === 'io server disconnect') {
-                    socket.connect();
-                }
+                setConnectionState(socketURL, 'disconnected', reason);
+            });
+
+            socket.on('reconnect_attempt', () => {
+                setConnectionState(socketURL, 'reconnecting');
             });
 
             socket.on('connect', () => {
                 setConnectionState(socketURL, 'connected');
-                if (!workerJobTypesLogged) {
-                    workerJobTypesLogged = true;
-                    console.log(`Worker job types: ${workerJobTypes.join(', ')}`);
+                const jobTypes = [];
+                if (process.env.PROJECTS_DIR || process.env.PATH_TMAKE) {
+                    jobTypes.push('build:tios');
                 }
+                if (process.env.ZEPHYR_BASE) {
+                    jobTypes.push('build:zephyr');
+                }
+                console.log(`Worker job types: ${jobTypes.join(', ')}`);
                 socket.emit('update', {
                     key: server.key,
-                    capabilities: workerJobTypes,
+                    capabilities: jobTypes,
                     jobs: Object.keys(jobs),
                     load: getTaskLoad(),
                 });
@@ -578,6 +546,7 @@ try {
             });
         }
         setupConnectionStatusBar();
+        trackInterval(printConnectionStates, 30000);
     }
 } catch (ex) {
     console.log('unable to read config.json');
@@ -876,8 +845,9 @@ async function buildZephyr(job, puuid, fileWrites) {
     const cmdArgs = [];
     if (process.platform === 'win32') {
         ccmd = 'cmd.exe';
+        cmdArgs.push('/d');
         cmdArgs.push('/c');
-        cmdArgs.push(`"${path.join(zephyrProjectPath, '.venv', 'Scripts', 'activate.bat')} && cd ${process.env.PROJECTS_DIR}/temp && west build -b ${project.zephyrName} ./${shortPath} --build-dir ./${shortPath}/build  -- -DBOARD_ROOT=./"`);
+        cmdArgs.push(`"${path.join(zephyrPYENVPath, '.venv', 'Scripts', 'activate.bat')} && cd ${projectPath} && west build -b ${project.zephyrName} .\\app --build-dir .\\build --no-sysbuild -- -DBOARD_ROOT=./"`);
     } else {
         ccmd = 'bash';
         cmdArgs.push('-c');
