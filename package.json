@@ -4,7 +4,14 @@
     "description": "",
     "private": true,
     "scripts": {
-        "start": "node ./src/index.js"
+        "start": "node ./src/index.js",
+        "build": "node ./build.js",
+        "build:min": "node ./build.js --minify",
+        "build:fast": "node ./build.js --no-assets",
+        "start:dist": "node ./dist/index.js"
+    },
+    "devDependencies": {
+        "esbuild": "^0.27.1"
     },
     "dependencies": {
         "dotenv": "^8.1.0",
