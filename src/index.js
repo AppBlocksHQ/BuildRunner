@@ -69,14 +69,18 @@ function killAllPids(job) {
 
 
 //  PATHS
+// The bundled build (dist/index.js) puts the entry point at the package root
+// itself; from source it lives one level down in src/. build.js sets this define.
+const IS_BUNDLE = process.env.BUILDRUNNER_BUNDLED === '1';
 // Get 'BuildRunner' Path
-let APP_ROOT = path.join(__dirname, '..');
-// detect if running in appblocks
-if (fs.existsSync(path.join(__dirname, '..', '..', '..', 'package.json'))) {
-    const packageJson = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'package.json'));
+const PKG_ROOT = path.join(__dirname, '..');
+let APP_ROOT = PKG_ROOT;
+// detect if running in appblocks (source layout only -- dist/ is its own root)
+if (!IS_BUNDLE && fs.existsSync(path.join(PKG_ROOT, '..', '..', 'package.json'))) {
+    const packageJson = fs.readFileSync(path.join(PKG_ROOT, '..', '..', 'package.json'));
     const packageData = JSON.parse(packageJson);
     if (packageData.name === '@appblocks/root') {
-        APP_ROOT = path.join(__dirname, '..', '..', '..');
+        APP_ROOT = path.join(PKG_ROOT, '..', '..');
     }
 }
 console.log(APP_ROOT);
@@ -397,10 +401,10 @@ function getTaskLoad() {
 
 let servers = [];
 try {
-    const configPath = path.join(__dirname, '..', 'config.json');
+    const configPath = path.join(PKG_ROOT, 'config.json');
     let configs = [];
     if (fs.existsSync(configPath)) {
-        const fileContents = fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf-8');
+        const fileContents = fs.readFileSync(configPath, 'utf-8');
         configs = JSON.parse(fileContents);
     } else {
         configs.push({
