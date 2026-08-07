@@ -76,14 +76,6 @@ const IS_BUNDLE = process.env.BUILDRUNNER_BUNDLED === '1';
 const PKG_ROOT = path.join(__dirname, '..');
 let APP_ROOT = PKG_ROOT;
 // detect if running in appblocks (source layout only -- dist/ is its own root)
-if (!IS_BUNDLE && fs.existsSync(path.join(PKG_ROOT, '..', '..', 'package.json'))) {
-    const packageJson = fs.readFileSync(path.join(PKG_ROOT, '..', '..', 'package.json'));
-    const packageData = JSON.parse(packageJson);
-    if (packageData.name === '@appblocks/root') {
-        APP_ROOT = path.join(PKG_ROOT, '..', '..');
-    }
-}
-console.log(APP_ROOT);
 
 // Get '.env' Path
 const envFilePath = path.join(APP_ROOT, '.env');
