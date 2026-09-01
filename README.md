@@ -72,6 +72,41 @@ A worker advertises `build:tios` when `PROJECTS_DIR` or `PATH_TMAKE` is set, and
 `build:zephyr` when `ZEPHYR_BASE` is set, so the same artifact serves both roles
 depending on the toolchains installed on the host.
 
+## Zephyr build options
+
+A `build:zephyr` job takes two optional settings. Each one is read from the job
+input first and from the project second, so a server can send it per build or
+store it on the project:
+
+| Setting | Keys | Effect |
+| --- | --- | --- |
+| Clean build | `clean`, `cleanBuild`, `zephyrCleanBuild` | Deletes the project's `build/` folder before running `west`, so nothing is reused from the previous build |
+| Binary path | `binaryPath`, `zephyrBinaryPath` | Relative path to the binary to return, instead of the default locations |
+| Hex path | `hexPath`, `zephyrHexPath` | Relative path to the hex to return |
+| Elf path | `elfPath`, `zephyrElfPath`, `symbolsPath` | Relative path to the elf returned as `symbols` |
+
+The clean flag accepts a boolean or the string a JSON payload may carry it in
+(`"true"`, `"1"`, `"yes"`, `"on"`).
+
+Paths are relative to the project folder — the same folder `west` runs in, so
+they start at `build/`. Forward and backslashes both work; a path pointing
+outside the project folder is logged and ignored. Setting `binaryPath` is how an
+mcuboot project asks for its signed image:
+
+```json
+{
+  "zephyrBinaryPath": "build/app/zephyr/zephyr.signed.bin",
+  "cleanBuild": false
+}
+```
+
+Given a binary path, the hex and elf default to the artefacts a signed build
+puts beside it — `zephyr.signed.hex` and `zephyr.elf` — unless `hexPath` or
+`elfPath` says otherwise. Without a binary path the worker keeps its existing
+behaviour: `build/zephyr/zephyr.bin`, falling back to the sysbuild layout under
+`build/app/zephyr/` and to `build/merged.hex`. A binary that is missing after
+the build fails the job rather than falling back to a different image.
+
 ## Zephyr 
 ```
 docker pull ghcr.io/zephyrproject-rtos/ci:latest

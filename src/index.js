@@ -14,6 +14,39 @@ const psTree = require('ps-tree');
 
 
 // FUNCTIONS
+
+// A job can ask for a specific build artifact (for example
+// 'app/zephyr/zephyr.signed.bin' for an OTA image) instead of the regular build
+// output. The path is relative to the build directory, a leading 'build/' is
+// accepted as well, and it may not escape the build directory.
+function resolveBuildArtifact(projectPath, relativePath) {
+    if (typeof relativePath !== 'string' || relativePath.trim() === '') {
+        return undefined;
+    }
+    const parts = relativePath.trim().replace(/\\/g, '/').split('/')
+        .filter(part => part !== '' && part !== '.');
+    if (parts.includes('..')) {
+        return undefined;
+    }
+    if (parts[0] === 'build') {
+        parts.shift();
+    }
+    if (parts.length === 0) {
+        return undefined;
+    }
+    return path.join(projectPath, 'build', ...parts);
+}
+
+// Wipe a build output directory so the next build starts from scratch.
+function cleanBuildDir(dirPath) {
+    try {
+        fs.removeSync(dirPath);
+    } catch (ex) {
+        console.log(`unable to clean ${dirPath}`);
+        console.log(ex);
+    }
+}
+
 function removeDir(job) {
     const targetDir = jobs[job.id].projectPah;
 
@@ -622,6 +655,12 @@ async function buildTide(job, puuid, fileWrites) {
     }
     await Promise.all(fileWrites);
 
+    if (job.input.clean === true) {
+        // tmake keeps its intermediate output (including the symbol database) in tmp
+        console.log(`clean build requested for ${projectPath}`);
+        cleanBuildDir(path.join(projectPath, 'tmp'));
+    }
+
     const platformsRoot = path.join(APP_ROOT, 'platforms', 'Platforms');
     if (process.platform === 'win32') {
         const projectPlatform = project.device;
@@ -807,7 +846,14 @@ async function buildZephyr(job, puuid, fileWrites) {
     }
     await Promise.all(fileWrites);
 
-    tpcPath = path.join(projectPath, 'build', 'zephyr', 'zephyr.bin');
+    if (job.input.clean === true) {
+        console.log(`clean build requested for ${projectPath}`);
+        cleanBuildDir(path.join(projectPath, 'build'));
+    }
+
+    const requestedBinary = resolveBuildArtifact(projectPath, job.input.binaryPath);
+    tpcPath = requestedBinary || path.join(projectPath, 'build', 'zephyr', 'zephyr.bin');
+    console.log('tpcPath', tpcPath);
     pdbPath = path.join(projectPath, 'build', 'zephyr', 'zephyr.elf');
     hexPath = path.join(projectPath, 'build', 'zephyr', 'zephyr.hex');
     shortPath = puuid;
@@ -843,11 +889,18 @@ async function buildZephyr(job, puuid, fileWrites) {
     }
     await fs.outputFile(path.join(projectPath, 'files.json'), JSON.stringify(files));
     const cmdArgs = [];
+    let sysbuildOption = '--no-sysbuild';
+    if (job.input.sysbuild === true) {
+        sysbuildOption = '--sysbuild';
+    }
+    if (project.zephyrToolchain === 'nrf') {
+        sysbuildOption = '--sysbuild';
+    }
     if (process.platform === 'win32') {
         ccmd = 'cmd.exe';
         cmdArgs.push('/d');
         cmdArgs.push('/c');
-        cmdArgs.push(`"${path.join(zephyrPYENVPath, '.venv', 'Scripts', 'activate.bat')} && cd ${projectPath} && west build -b ${project.zephyrName} .\\app --build-dir .\\build --no-sysbuild -- -DBOARD_ROOT=./"`);
+        cmdArgs.push(`"${path.join(zephyrPYENVPath, '.venv', 'Scripts', 'activate.bat')} && cd ${projectPath} && west build -b ${project.zephyrName} .\\app --build-dir .\\build ${sysbuildOption} -- -DBOARD_ROOT=./"`);
     } else {
         ccmd = 'bash';
         cmdArgs.push('-c');
@@ -863,7 +916,7 @@ ${zephyrSDKPath !== '' ? `export ZEPHYR_SDK_INSTALL_DIR=${zephyrSDKPath}` : ''}
 source ${zephyrPYENVPath}/.venv/bin/activate
 export CCACHE_BASEDIR=${projectPath}
 export CCACHE_NOHASHDIR=1
-west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${project.zephyrToolchain === 'nrf' ? '--sysbuild' : '--no-sysbuild'}
+west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${sysbuildOption}
         `);
     }
     console.log(ccmd, ...cmdArgs);
@@ -936,7 +989,9 @@ west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${project.z
                 // const compileData = globalThis.compileData.get(pid);
                 job.result.output = compileOutput;
                 const exitCode = exec.exitCode;
-                if (!fs.existsSync(tpcPath)) {
+                let bootloaderPath = '';
+                if (!requestedBinary && !fs.existsSync(tpcPath)) {
+                    // sysbuild keeps the application artifacts under build/app
                     hexPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.hex');
                     tpcPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.bin');
                     pdbPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.elf');
@@ -944,18 +999,33 @@ west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${project.z
                         hexPath = path.join(projectPath, 'build', 'merged.hex');
                     }
                 }
+                if (requestedBinary) {
+                    tpcPath = requestedBinary;
+                    // the requested artifact says nothing about where the symbols and
+                    // hex ended up, so fall back to the sysbuild locations for those
+                    if (!fs.existsSync(pdbPath)) {
+                        pdbPath = path.join(projectPath, 'build', 'app', 'zephyr', 'zephyr.elf');
+                    }
+                    // build/mcuboot/zephyr/zephyr.bin
+                    bootloaderPath = path.join(projectPath, 'build', 'mcuboot', 'zephyr', 'zephyr.bin');
+                    if (!fs.existsSync(bootloaderPath)) {
+                        bootloaderPath = undefined;
+                    }
+                }
                 if (exitCode !== 0 || !fs.existsSync(tpcPath)) {
                     return reject(exec.exitCode);
                 }
-                console.log(`job for ${projectPath} completed`);
                 let hex;
                 if (fs.existsSync(hexPath)) {
                     hex = fs.readFileSync(hexPath);
                 }
+                console.log(`job for ${projectPath} completed`);
                 resolve({
                     files: {
                         binary: fs.readFileSync(tpcPath),
-                        symbols: fs.readFileSync(pdbPath),
+                        symbols: fs.existsSync(pdbPath) ? fs.readFileSync(pdbPath) : undefined,
+                        bootloader: fs.existsSync(bootloaderPath)
+                            ? fs.readFileSync(bootloaderPath) : undefined,
                         hex,
                     },
                     output: compileOutput,
