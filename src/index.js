@@ -74,6 +74,17 @@ function killAllPids(job) {
         return;
     }
 
+    if (process.platform === 'win32') {
+        // taskkill /T walks the tree itself, so no childPids needed (ps-tree relies on wmic.exe,
+        // which is removed from newer Windows builds)
+        try {
+            cp.execFileSync('taskkill', ['/PID', String(parentPid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+        } catch (err) {
+            // Process tree already terminated
+        }
+        return;
+    }
+
     try {
         process.kill(parentPid);
     } catch (err) {
@@ -195,6 +206,11 @@ const addProjectCronChkToFilesWrites = (job) => {
 
 // Get childPids
 const getChildPids = async (job) => {
+    // ps-tree spawns wmic.exe on Windows and crashes the process when it is missing;
+    // killAllPids uses taskkill /T there instead
+    if (process.platform === 'win32') {
+        return [];
+    }
     try {
         // Retrieve the child processes using psTree wrapped in a Promise
         const children = await new Promise((resolve, reject) => {
