@@ -37,6 +37,55 @@ function resolveBuildArtifact(projectPath, relativePath) {
     return path.join(projectPath, 'build', ...parts);
 }
 
+// Debug info kept in the symbol file returned with zephyr builds, see
+// strip-elf-debug.js. The full DWARF of a zephyr image is far too large to send
+// back with every build. The frontend debugger needs the symbol table to
+// resolve variable addresses and, for breakpoints, the line tables of the
+// generated application sources (app/src) to map block code lines to
+// addresses. Every other DWARF section is dropped.
+const ZEPHYR_SYMBOLS_ARGS = ['--level', 'symbols'];
+const ZEPHYR_DEBUG_SYMBOLS_ARGS = [
+    '--level', 'lite',
+    '--only-cu', 'app/src/,app\\src\\',
+    '--drop', '.debug_info,.debug_abbrev,.debug_str,.debug_aranges,.debug_ranges,.debug_rnglists',
+];
+
+function runStripElf(elfPath, outPath, args) {
+    fs.removeSync(outPath);
+    return new Promise((resolve) => {
+        cp.execFile(process.execPath,
+            [path.join(__dirname, 'strip-elf-debug.js'), ...args, elfPath, outPath],
+            { env: { ...process.env, NODE_OPTIONS: '' }, windowsHide: true },
+            (err, stdout, stderr) => {
+                if (err || !fs.existsSync(outPath)) {
+                    console.log(`unable to strip ${elfPath} (${args.join(' ')})`);
+                    console.log(stderr || err);
+                    resolve(undefined);
+                    return;
+                }
+                resolve(fs.readFileSync(outPath));
+            });
+    });
+}
+
+// Produce a reduced copy of a zephyr ELF to return as the build's symbol file.
+// Debug builds keep the app line tables when possible, then fall back to the
+// symbol table alone, then to the full ELF.
+async function stripElfSymbols(elfPath, debug) {
+    if (!elfPath || !fs.existsSync(elfPath)) {
+        return undefined;
+    }
+    const outPath = path.join(path.dirname(elfPath), 'zephyr.symbols.elf');
+    let symbols;
+    if (debug) {
+        symbols = await runStripElf(elfPath, outPath, ZEPHYR_DEBUG_SYMBOLS_ARGS);
+    }
+    if (!symbols) {
+        symbols = await runStripElf(elfPath, outPath, ZEPHYR_SYMBOLS_ARGS);
+    }
+    return symbols || fs.readFileSync(elfPath);
+}
+
 // Wipe a build output directory so the next build starts from scratch.
 function cleanBuildDir(dirPath) {
     try {
@@ -822,6 +871,7 @@ const BUILDZEPHYR_SPAWN_TIMEOUT = 600000;
 async function buildZephyr(job, puuid, fileWrites) {
     const project = job.input.project;
     const files = job.input.files;
+    const debug = job.input.debug === 'on' || job.input.debug === true;
     let tpcPath = '';
     let pdbPath = '';
     let hexPath = '';
@@ -912,18 +962,25 @@ async function buildZephyr(job, puuid, fileWrites) {
     if (project.zephyrToolchain === 'nrf') {
         sysbuildOption = '--sysbuild';
     }
+    let appFolder = './';
+    if (fs.existsSync(path.join(projectPath, 'app'))) {
+        appFolder = './app';
+    }
+    // Debug builds add the app's debug.conf (debug optimizations, GDB monitor
+    // and the UDP GDB tunnel). EXTRA_CONF_FILE is kept in the CMake cache, so it
+    // is always passed explicitly, empty for release builds, otherwise a
+    // release build would inherit debug.conf from an earlier debug build.
+    const debugConf = debug && fs.existsSync(path.join(projectPath, appFolder, 'debug.conf'))
+        ? 'debug.conf' : '';
+    const cmakeArgs = `-DEXTRA_CONF_FILE=${debugConf}`;
     if (process.platform === 'win32') {
         ccmd = 'cmd.exe';
         cmdArgs.push('/d');
         cmdArgs.push('/c');
-        cmdArgs.push(`"${path.join(zephyrPYENVPath, '.venv', 'Scripts', 'activate.bat')} && cd ${projectPath} && west build -b ${project.zephyrName} .\\app --build-dir .\\build ${sysbuildOption} -- -DBOARD_ROOT=./"`);
+        cmdArgs.push(`"${path.join(zephyrPYENVPath, '.venv', 'Scripts', 'activate.bat')} && cd ${projectPath} && west build -b ${project.zephyrName} .\\app --build-dir .\\build ${sysbuildOption} -- -DBOARD_ROOT=./ ${cmakeArgs}"`);
     } else {
         ccmd = 'bash';
         cmdArgs.push('-c');
-        let appFolder = './';
-        if (fs.existsSync(path.join(projectPath, 'app'))) {
-            appFolder = './app';
-        }
         cmdArgs.push(`
 
 cd ${projectPath}
@@ -932,7 +989,7 @@ ${zephyrSDKPath !== '' ? `export ZEPHYR_SDK_INSTALL_DIR=${zephyrSDKPath}` : ''}
 source ${zephyrPYENVPath}/.venv/bin/activate
 export CCACHE_BASEDIR=${projectPath}
 export CCACHE_NOHASHDIR=1
-west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${sysbuildOption}
+west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${sysbuildOption} -- ${cmakeArgs}
         `);
     }
     console.log(ccmd, ...cmdArgs);
@@ -1035,16 +1092,20 @@ west build -b ${project.zephyrName} ${appFolder} --build-dir ./build ${sysbuildO
                 if (fs.existsSync(hexPath)) {
                     hex = fs.readFileSync(hexPath);
                 }
-                console.log(`job for ${projectPath} completed`);
-                resolve({
-                    files: {
-                        binary: fs.readFileSync(tpcPath),
-                        symbols: fs.existsSync(pdbPath) ? fs.readFileSync(pdbPath) : undefined,
-                        bootloader: fs.existsSync(bootloaderPath)
-                            ? fs.readFileSync(bootloaderPath) : undefined,
-                        hex,
-                    },
-                    output: compileOutput,
+                const binary = fs.readFileSync(tpcPath);
+                const bootloader = fs.existsSync(bootloaderPath)
+                    ? fs.readFileSync(bootloaderPath) : undefined;
+                stripElfSymbols(pdbPath, debug).then((symbols) => {
+                    console.log(`job for ${projectPath} completed`);
+                    resolve({
+                        files: {
+                            binary,
+                            symbols,
+                            bootloader,
+                            hex,
+                        },
+                        output: compileOutput,
+                    });
                 });
             });
 
