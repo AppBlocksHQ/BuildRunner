@@ -519,12 +519,37 @@ try {
 
             setConnectionState(socketURL, 'connecting');
 
+            const endpoint = formatEndpointLabel(socketURL);
+            let connectedAt = null;
+            // the reason the server gave for dropping us, if it gave one
+            let rejectReason = null;
+
             socket.on('connect_error', (err) => {
                 setConnectionState(socketURL, 'error', err.message);
+                console.error(`[${new Date().toISOString()}] ${endpoint}: connect error: ${err.message}`, {
+                    type: err.type,
+                    description: err.description,
+                    context: err.context,
+                });
             });
 
-            socket.on('disconnect', (reason) => {
-                setConnectionState(socketURL, 'disconnected', reason);
+            socket.on('rejected', (packet) => {
+                rejectReason = packet && packet.reason;
+                console.error(`[${new Date().toISOString()}] ${endpoint}: server rejected worker: ${rejectReason}`);
+            });
+
+            socket.on('disconnect', (reason, details) => {
+                const detail = rejectReason ? `${reason}: ${rejectReason}` : reason;
+                setConnectionState(socketURL, 'disconnected', detail);
+                const connectedFor = connectedAt ? `${Math.round((Date.now() - connectedAt) / 1000)}s` : 'n/a';
+                console.error(`[${new Date().toISOString()}] ${endpoint}: disconnected (${detail}) after ${connectedFor}`, details || '');
+                if (reason === 'io server disconnect') {
+                    // socket.io does not reconnect on its own after the server
+                    // dropped the connection
+                    console.error(`${endpoint}: not reconnecting, the server closed the connection${rejectReason ? '' : ' without giving a reason'}`);
+                }
+                connectedAt = null;
+                rejectReason = null;
             });
 
             socket.on('reconnect_attempt', () => {
@@ -533,6 +558,8 @@ try {
 
             socket.on('connect', () => {
                 setConnectionState(socketURL, 'connected');
+                connectedAt = Date.now();
+                console.log(`[${new Date().toISOString()}] ${endpoint}: connected (socket ${socket.id})`);
                 const jobTypes = [];
                 if (process.env.PROJECTS_DIR || process.env.PATH_TMAKE) {
                     jobTypes.push('build:tios');
