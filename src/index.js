@@ -293,6 +293,8 @@ let isShuttingDown = false;
 
 const connectionStates = {};
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+// how long to wait before reconnecting after the server closed the connection
+const SERVER_DISCONNECT_RETRY_MS = 30000;
 let statusBarLineCount = 0;
 let statusBarActive = false;
 let lastLoggedStatusContent = '';
@@ -523,6 +525,7 @@ try {
             let connectedAt = null;
             // the reason the server gave for dropping us, if it gave one
             let rejectReason = null;
+            let retryTimer = null;
 
             socket.on('connect_error', (err) => {
                 setConnectionState(socketURL, 'error', err.message);
@@ -543,10 +546,19 @@ try {
                 setConnectionState(socketURL, 'disconnected', detail);
                 const connectedFor = connectedAt ? `${Math.round((Date.now() - connectedAt) / 1000)}s` : 'n/a';
                 console.error(`[${new Date().toISOString()}] ${endpoint}: disconnected (${detail}) after ${connectedFor}`, details || '');
-                if (reason === 'io server disconnect') {
+                if (reason === 'io server disconnect' && !isShuttingDown) {
                     // socket.io does not reconnect on its own after the server
-                    // dropped the connection
-                    console.error(`${endpoint}: not reconnecting, the server closed the connection${rejectReason ? '' : ' without giving a reason'}`);
+                    // dropped the connection, so retry after a delay to avoid a
+                    // tight loop when the server keeps rejecting us
+                    console.error(`${endpoint}: the server closed the connection${rejectReason ? '' : ' without giving a reason'}, retrying in ${SERVER_DISCONNECT_RETRY_MS / 1000}s`);
+                    clearTimeout(retryTimer);
+                    retryTimer = setTimeout(() => {
+                        retryTimer = null;
+                        if (!isShuttingDown && !socket.connected) {
+                            setConnectionState(socketURL, 'reconnecting');
+                            socket.connect();
+                        }
+                    }, SERVER_DISCONNECT_RETRY_MS);
                 }
                 connectedAt = null;
                 rejectReason = null;
