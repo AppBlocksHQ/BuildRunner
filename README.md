@@ -57,7 +57,9 @@ it is run — so the file lives in a different place in each case:
 `packages/buildrunner/config.json` in source and `dist/config.json` in a build. `--with-config` copies from whichever of these locations is live and
 prints the path it used, so the build never quietly picks up the wrong `.env`.
 If `config.json` is absent the worker falls back to a single server built from
-`API_URL` and `WORKER_KEY`.
+`API_URL` and `WORKER_KEY`. `BUILDRUNNER_SERVERS` (comma-separated URLs, all
+using `WORKER_KEY`) overrides both; the docker deploy uses it to list the blue
+and green servers.
 
 ### Deploying
 

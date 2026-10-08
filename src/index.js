@@ -495,11 +495,36 @@ function getTaskLoad() {
     };
 }
 
+// The server that handed a job out can be gone by the time the job finishes,
+// e.g. the old colour of a blue/green cutover. Servers of one deployment share
+// a database, so any of them can record the result; offer it to every
+// connected server and drop it once one acks that it knows the job. Servers
+// that do not know it (or predate the ack) leave it queued for the next connect.
+const JOB_HANDOFF_TIMEOUT_MS = 10000;
+function handOffFinishedJob(job) {
+    sockets.filter((s) => s.connected).forEach((s) => {
+        s.timeout(JOB_HANDOFF_TIMEOUT_MS).emit('job', job, (err, accepted) => {
+            if (!err && accepted && jobs[job.id]) {
+                console.log(`[${new Date().toISOString()}] job ${job.id} handed off to another server`);
+                delete jobs[job.id];
+            }
+        });
+    });
+}
+
 let servers = [];
 try {
     const configPath = path.join(__dirname, '..', 'config.json');
     let configs = [];
-    if (fs.existsSync(configPath)) {
+    if (process.env.BUILDRUNNER_SERVERS) {
+        // Comma separated URLs sharing WORKER_KEY. Takes precedence over
+        // config.json, which in the docker deploy sits in the bind-mounted
+        // tree and so carries whatever the host's checkout has in it.
+        configs = process.env.BUILDRUNNER_SERVERS.split(',')
+            .map((url) => url.trim())
+            .filter(Boolean)
+            .map((url) => ({ url, key: process.env.WORKER_KEY }));
+    } else if (fs.existsSync(configPath)) {
         const fileContents = fs.readFileSync(configPath, 'utf-8');
         configs = JSON.parse(fileContents);
     } else {
@@ -637,7 +662,9 @@ try {
                         }
                         // Section: result, output, progress
                         if (job.status !== 'completed' && job.result && (job.result.output || job.progress)) {
-                            socket.emit('job', {
+                            // volatile: a plain emit is buffered while disconnected and replayed on
+                            // reconnect, which would set a since-finished job back to processing
+                            socket.volatile.emit('job', {
                                 ...job,
                                 result: {
                                     output: job.result.output,
@@ -678,6 +705,8 @@ try {
                         socket.emit('job', job);
                         delete jobs[job.id];
                         socket.emit('load', { key: server.key, ...getTaskLoad() });
+                    } else {
+                        handOffFinishedJob(job);
                     }
                 }
             });
